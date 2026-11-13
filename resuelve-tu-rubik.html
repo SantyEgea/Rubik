@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resuelve tu Rubik</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  /* Paleta del usuario: Honeydew de fondo, Charcoal Brown para texto, Golden Pollen para la acción,
+     Indigo para las tarjetas de instrucción y Watermelon para avisos. Una columna, pensada para celular. */
+  --bg:#F3FCF0; --panel:#ffffff; --line:#cddbc8;
+  --text:#1F271B; --muted:rgba(31,39,27,.64);
+  --yellow:#FFD23F; --pink:#EE4266; --indigo:#540D6E;
+  --font:"Rubik",system-ui,-apple-system,"Segoe UI",sans-serif;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);font:400 16px/1.5 var(--font);-webkit-font-smoothing:antialiased}
+main{max-width:520px;margin:0 auto;padding:20px 16px 48px;display:flex;flex-direction:column;gap:18px}
+h1{font:700 24px/1.15 var(--font);margin:0;text-wrap:balance}
+h2{font:500 17px/1.3 var(--font);margin:0;text-wrap:balance}
+p{margin:0}
+.muted{color:var(--muted)}
+.small{font-size:14px}
+[hidden]{display:none!important}
+button,.btn{font:500 15px/1.2 var(--font);color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px 16px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;text-align:center}
+button:disabled{opacity:.4;cursor:default}
+button.primary,.btn.primary{background:var(--yellow);color:var(--text);border-color:var(--yellow);font-weight:700}
+button.link{background:none;border:none;padding:6px 2px;color:var(--muted);text-decoration:underline;text-underline-offset:3px}
+:focus-visible{outline:2px solid var(--text);outline-offset:2px}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.row>*{flex:1 1 0}
+.row.loose>*{flex:0 1 auto}
+.filebtn{position:relative;overflow:hidden}
+.filebtn input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:0}
+
+nav{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+nav button{padding:11px 4px;font-size:14px;border-radius:10px;background:none;opacity:.4}
+nav button:disabled{opacity:.25}
+nav button[aria-current="true"]{background:var(--yellow);border-color:var(--yellow);color:var(--text);font-weight:700;opacity:1}
+
+section{display:none;flex-direction:column;gap:16px}
+section.on{display:flex}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.card.guide{background:var(--indigo);border-color:transparent;color:#F3FCF0}
+.card.guide .muted,.card.guide .step{color:rgba(243,252,240,.8)}
+.step{font:500 12px/1 var(--font);color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
+
+/* fotos */
+.faces{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+.faces button{flex-direction:column;padding:7px 2px 6px;gap:5px;font-size:11px;color:var(--muted);border-radius:10px;background:none}
+.faces button[aria-current="true"]{border-color:var(--indigo);border-width:2px;color:var(--text);background:var(--panel)}
+.mini{display:grid;grid-template-columns:repeat(3,9px);gap:2px}
+.mini i{width:9px;height:9px;border-radius:2px;background:var(--line)}
+.stage{position:relative;aspect-ratio:1;border-radius:16px;overflow:hidden;background:#0d110b;touch-action:pan-y;user-select:none;width:84%;align-self:center}
+.stage.has{touch-action:none}
+.stage canvas{width:100%;height:100%;display:block}
+.frame{position:absolute;inset:12%;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);border:3px solid #fff;border-radius:10px;box-shadow:0 0 0 999px rgba(13,17,11,.5);pointer-events:none}
+.frame div{border:1px solid rgba(243,252,240,.55);position:relative}
+.frame span{position:absolute;left:50%;top:50%;width:26%;height:26%;margin:-13% 0 0 -13%;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px #000;display:none}
+.stage.on .frame span{display:block}
+.hint{position:absolute;border-radius:6px;border:2px solid #fff;box-shadow:0 0 0 1px #000;pointer-events:none;display:none}
+.hint.top,.hint.bottom{left:38%;width:24%;height:5%}
+.hint.left,.hint.right{top:38%;height:24%;width:5%}
+.hint.top{top:3.5%}.hint.bottom{bottom:3.5%}.hint.left{left:3.5%}.hint.right{right:3.5%}
+.empty{position:absolute;inset:12%;display:flex;align-items:center;justify-content:center;text-align:center;padding:14%;color:rgba(243,252,240,.75);font-size:14px;pointer-events:none}
+.stage.on .empty{display:none}
+input[type=range]{width:100%;accent-color:var(--yellow)}
+.zoom{display:none;align-items:center;gap:10px;font-size:13px;color:var(--muted)}
+.zoom.on{display:flex}
+
+/* revisar */
+.okline{font-size:14px;opacity:.55;text-align:center}
+.alert{background:var(--pink);border-color:var(--pink);color:#fff;font-weight:700}
+.status{font-size:14px;padding:10px 12px;border-radius:10px;border-left:4px solid var(--pink);background:var(--panel)}
+.net{position:relative;display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.net .f{display:flex;flex-direction:column;gap:4px}
+.net .f small{font-size:11px;color:var(--muted);text-align:center}
+.net .g{display:grid;grid-template-columns:repeat(3,1fr);gap:3px}
+.net .g button{aspect-ratio:1;padding:0;border-radius:5px;border:1px solid rgba(31,39,27,.45);background:var(--line);cursor:default}
+.net.editing .g button{cursor:pointer}
+.net .g button.err{outline:2px solid var(--pink);outline-offset:1px}
+.net .g button.sel{outline:3px solid var(--indigo);outline-offset:1px;z-index:1}
+.pin{position:absolute;z-index:5;display:flex;gap:6px;padding:8px;border-radius:14px;background:var(--text);box-shadow:0 8px 24px rgba(0,0,0,.5)}
+.pin button{width:30px;height:30px;padding:0;border-radius:50%;border:2px solid rgba(255,255,255,.55)}
+.solve-btn{font-size:17px;padding:16px}
+.solve-btn svg{width:30px;height:30px;animation:float 2.6s ease-in-out infinite}
+@keyframes float{0%,100%{transform:translateY(3px) rotate(-4deg)}50%{transform:translateY(-5px) rotate(4deg)}}
+@media (prefers-reduced-motion:reduce){.solve-btn svg{animation:none}}
+
+/* solución */
+.chip{display:inline-block;width:14px;height:14px;border-radius:4px;vertical-align:-2px;border:1px solid rgba(0,0,0,.4);margin-right:4px}
+.hold ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(2,1fr);gap:4px 12px;font-size:14px;color:rgba(243,252,240,.8)}
+.scene{height:270px;perspective:900px;display:flex;align-items:center;justify-content:center;touch-action:pan-y;cursor:grab}
+.cube,.cubie,.cubie b{transform-style:preserve-3d}
+.cube{position:relative;width:0;height:0}
+.cubie{position:absolute;width:54px;height:54px;margin:-27px}
+.cubie b{position:absolute;inset:0;border-radius:7px;box-shadow:inset 0 0 0 3px #0b0e09;backface-visibility:hidden}
+.ghost{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;perspective:700px;pointer-events:none;opacity:.62;filter:drop-shadow(0 0 10px rgba(255,210,63,.8))}
+.top{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.timer{font:700 20px/1 var(--font);font-variant-numeric:tabular-nums}
+.now{display:flex;align-items:center;gap:14px;min-height:72px}
+.now .mv{font:700 46px/1 var(--font);color:var(--indigo);min-width:84px;text-align:center}
+.alg{display:flex;flex-wrap:wrap;gap:6px}
+.alg button{font:700 15px/1 var(--font);padding:9px 0;width:44px;border-radius:9px}
+.alg button.done{opacity:.4}
+.alg button[aria-current="true"]{border-color:var(--indigo);background:var(--indigo);color:#F3FCF0}
+.done-card{align-items:stretch;text-align:center;border-color:var(--yellow)}
+.done-card .big{font:700 34px/1.1 var(--font);color:var(--indigo);font-variant-numeric:tabular-nums}
+.done-card img{width:100%;border-radius:12px;display:block}
+details{font-size:14px;color:var(--muted)}
+details summary{cursor:pointer;color:var(--text);font-weight:500}
+details dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:10px 0 0}
+details dt{font-weight:700;color:var(--indigo)}
+details dd{margin:0}
+</style>
+</head>
+<body>
+<main>
+  <header><h1>Resuelve tu Rubik</h1></header>
+
+  <nav aria-label="Pasos">
+    <button id="nav-scan" type="button">Fotos</button>
+    <button id="nav-review" type="button" disabled>Revisar</button>
+    <button id="nav-solve" type="button" disabled>Solución</button>
+  </nav>
+
+  <!-- 1. Fotos -->
+  <section id="scan">
+    <div class="faces" id="faces"></div>
+    <div class="card guide">
+      <span class="step" id="scan-step"></span>
+      <h2 id="scan-title"></h2>
+      <p class="small muted" id="scan-text"></p>
+    </div>
+    <div class="stage" id="stage">
+      <canvas id="view" width="480" height="480"></canvas>
+      <div class="frame" id="frame"></div>
+      <i class="hint top"></i><i class="hint bottom"></i><i class="hint left"></i><i class="hint right"></i>
+      <div class="empty">Encaja la cara del cubo dentro de este marco</div>
+    </div>
+    <div class="zoom" id="zoom-row"><label for="zoom">Acercar</label><input id="zoom" type="range" min="1" max="6" step="0.01" value="1"></div>
+    <p class="small muted" id="scan-tip">Arrastra la foto y acércala hasta que las 9 casillas queden dentro de la cuadrícula.</p>
+    <div class="row">
+      <button class="primary" id="snap" type="button" hidden>Tomar foto</button>
+      <span class="btn primary filebtn" id="shot-btn"><span>Tomar foto</span><input id="shot" type="file" accept="image/*" capture="environment" aria-label="Tomar foto"></span>
+      <button class="primary" id="use" type="button" hidden>Usar esta cara</button>
+      <button id="retry" type="button" hidden>Repetir foto</button>
+      <span class="btn filebtn" id="reshot-btn" hidden><span>Repetir foto</span><input id="reshot" type="file" accept="image/*" capture="environment" aria-label="Repetir foto"></span>
+    </div>
+  </section>
+
+  <!-- 2. Revisar -->
+  <section id="review">
+    <p class="okline" id="okline" hidden></p>
+    <button class="alert" id="fix" type="button" hidden>Se encontraron caras giradas. Toca aquí, por favor.</button>
+    <div class="status" id="status" hidden></div>
+    <div class="net" id="net"><div class="pin" id="pin" hidden></div></div>
+    <div class="card">
+      <button id="edit" type="button">Cambiar un color</button>
+      <p class="small muted" id="edit-text">Si algún color salió distinto al de tu cubo, cámbialo aquí.</p>
+    </div>
+    <button class="primary solve-btn" id="solve-btn" type="button">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 28 9.5 16 16 4 9.5z" fill="#F3FCF0"/><path d="M4 9.5 16 16v13L4 22.5z" fill="#EE4266"/><path d="M28 9.5 16 16v13l12-6.5z" fill="#540D6E"/><path d="M16 3 28 9.5v13L16 29 4 22.5v-13z M4 9.5 16 16l12-6.5M16 16v13" fill="none" stroke="#1F271B" stroke-width="1.6" stroke-linejoin="round"/></svg>
+      <span id="solve-txt">Resolver</span>
+    </button>
+  </section>
+
+  <!-- 3. Solución -->
+  <section id="solve">
+    <div class="card guide hold">
+      <span class="step">Sostén el cubo así todo el tiempo</span>
+      <h2 id="hold-main"></h2>
+      <ul id="hold-rest"></ul>
+    </div>
+    <div class="stage on" id="ar-stage" hidden>
+      <canvas id="ar" width="480" height="480"></canvas>
+      <div class="frame" id="ar-frame"></div>
+      <div class="ghost" id="ghost" hidden><div class="cube" id="ghost-cube"></div></div>
+    </div>
+    <p class="small muted" id="ar-status" hidden></p>
+    <div class="card" id="move-card">
+      <div class="top"><span class="step" id="count"></span><span class="timer" id="timer">00:00</span></div>
+      <div class="now"><span class="mv" id="mv"></span><p id="mv-text"></p></div>
+      <div class="row">
+        <button id="prev" type="button">Anterior</button>
+        <button class="primary" id="next" type="button">Siguiente</button>
+      </div>
+    </div>
+    <div class="card done-card" id="done" hidden>
+      <span class="step">Cubo armado</span>
+      <span class="big" id="done-time"></span>
+      <img id="final-img" alt="Foto del cubo resuelto con el tiempo" hidden>
+      <p class="small muted" id="final-tip" hidden>Mantén presionada la imagen para guardarla.</p>
+      <button class="primary" id="final-snap" type="button" hidden>Tomar foto</button>
+      <span class="btn primary filebtn" id="final-btn"><span>Tomar foto</span><input id="final-file" type="file" accept="image/*" capture="environment" aria-label="Tomar foto del cubo resuelto"></span>
+      <button id="home" type="button">Volver al inicio</button>
+    </div>
+    <div class="scene" id="scene"><div class="cube" id="cube"></div></div>
+    <div class="card">
+      <h2>Algoritmo completo</h2>
+      <div class="alg" id="alg"></div>
+      <div class="row loose">
+        <button class="link" id="copy" type="button">Copiar algoritmo</button>
+        <button class="link" id="restart" type="button">Reiniciar pasos</button>
+      </div>
+      <details>
+        <summary>Cómo leer las letras</summary>
+        <dl>
+          <dt>R</dt><dd>Cara derecha, un cuarto de vuelta en sentido horario.</dd>
+          <dt>R'</dt><dd>La misma cara en sentido antihorario.</dd>
+          <dt>R2</dt><dd>Media vuelta.</dd>
+          <dt>U D</dt><dd>Arriba (Up) y abajo (Down).</dd>
+          <dt>L F B</dt><dd>Izquierda (Left), frente (Front) y atrás (Back).</dd>
+        </dl>
+        <p style="margin-top:10px">El sentido horario se mide mirando esa cara de frente.</p>
+      </details>
+    </div>
+  </section>
+</main>
+
+<script>
+/* Núcleo del cubo: geometría, validación y solucionador de dos fases (Kociemba). */
+(function (root) {
+  'use strict';
+  // Caras en orden U R F D L B. Ejes: x derecha, y abajo, z hacia quien mira.
+  const NORMALS = [[0, -1, 0], [1, 0, 0], [0, 0, 1], [0, 1, 0], [-1, 0, 0], [0, 0, -1]];
+  function facePos(f, r, c) {
+    switch (f) {
+      case 0: return [c - 1, -1, r - 1];
+      case 1: return [1, r - 1, 1 - c];
+      case 2: return [c - 1, r - 1, 1];
+      case 3: return [c - 1, 1, 1 - r];
+      case 4: return [-1, r - 1, c - 1];
+      default: return [1 - c, r - 1, -1];
+    }
+  }
+  const key = (p, n) => p.join(',') + '|' + n.join(',');
+  const FACELET = []; const LOOKUP = {};
+  for (let f = 0; f < 6; f++) for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
+    const p = facePos(f, r, c); LOOKUP[key(p, NORMALS[f])] = FACELET.length;
+    FACELET.push({ pos: p, normal: NORMALS[f] });
+  }
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  // Giro de 90° horario (visto desde fuera) alrededor de la normal n.
+  function rot90(n, v) {
+    const d = dot(n, v);
+    return [n[0] * d + n[1] * v[2] - n[2] * v[1], n[1] * d + n[2] * v[0] - n[0] * v[2], n[2] * d + n[0] * v[1] - n[1] * v[0]];
+  }
+  const facePerm = [];
+  for (let f = 0; f < 6; f++) {
+    const n = NORMALS[f], perm = new Array(54);
+    for (let i = 0; i < 54; i++) {
+      const s = FACELET[i];
+      perm[i] = dot(s.pos, n) === 1 ? LOOKUP[key(rot90(n, s.pos), rot90(n, s.normal))] : i;
+    }
+    facePerm.push(perm); // el facelet i pasa a perm[i]
+  }
+  function applyFace(state, f) { const o = state.slice(); const p = facePerm[f]; for (let i = 0; i < 54; i++) o[p[i]] = state[i]; return o; }
+  function applyMove(state, m) { let s = state; for (let k = 0; k <= m % 3; k++) s = applyFace(s, (m / 3) | 0); return s; }
+  const SOLVED = []; for (let i = 0; i < 54; i++) SOLVED.push((i / 9) | 0);
+
+  // ---- nivel de piezas ----
+  const CF = [[8, 9, 20], [6, 18, 38], [0, 36, 47], [2, 45, 11], [29, 26, 15], [27, 44, 24], [33, 53, 42], [35, 17, 51]];
+  const EF = [[5, 10], [7, 19], [3, 37], [1, 46], [32, 16], [28, 25], [30, 43], [34, 52], [23, 12], [21, 41], [50, 39], [48, 14]];
+  const CC = CF.map(a => a.map(x => (x / 9) | 0)), EC = EF.map(a => a.map(x => (x / 9) | 0));
+
+  function toCubie(f) {
+    const cp = [], co = [], ep = [], eo = [];
+    for (let i = 0; i < 8; i++) {
+      let ori = 0; while (ori < 3 && f[CF[i][ori]] !== 0 && f[CF[i][ori]] !== 3) ori++;
+      if (ori === 3) return { error: 'corner', at: CF[i] };
+      const a = f[CF[i][ori]], b = f[CF[i][(ori + 1) % 3]], c = f[CF[i][(ori + 2) % 3]];
+      let j = 0; while (j < 8 && !(CC[j][0] === a && CC[j][1] === b && CC[j][2] === c)) j++;
+      if (j === 8) return { error: 'corner', at: CF[i] };
+      cp.push(j); co.push(ori);
+    }
+    for (let i = 0; i < 12; i++) {
+      const a = f[EF[i][0]], b = f[EF[i][1]]; let found = false;
+      for (let j = 0; j < 12 && !found; j++) {
+        if (EC[j][0] === a && EC[j][1] === b) { ep.push(j); eo.push(0); found = true; }
+        else if (EC[j][0] === b && EC[j][1] === a) { ep.push(j); eo.push(1); found = true; }
+      }
+      if (!found) return { error: 'edge', at: EF[i] };
+    }
+    return { cp, co, ep, eo };
+  }
+  function mul(a, b) {
+    const cp = [], co = [], ep = [], eo = [];
+    for (let i = 0; i < 8; i++) { cp.push(a.cp[b.cp[i]]); co.push((a.co[b.cp[i]] + b.co[i]) % 3); }
+    for (let i = 0; i < 12; i++) { ep.push(a.ep[b.ep[i]]); eo.push((a.eo[b.ep[i]] + b.eo[i]) % 2); }
+    return { cp, co, ep, eo };
+  }
+  function parity(p) { let s = 0; for (let i = 0; i < p.length; i++) for (let j = i + 1; j < p.length; j++) if (p[i] > p[j]) s++; return s & 1; }
+
+  // Revisa un estado (54 índices de cara) y dice qué falla.
+  function validate(f) {
+    const cnt = [0, 0, 0, 0, 0, 0];
+    for (let i = 0; i < 54; i++) { if (f[i] < 0 || f[i] > 5) return { ok: false, code: 'missing' }; cnt[f[i]]++; }
+    for (let i = 0; i < 6; i++) if (cnt[i] !== 9) return { ok: false, code: 'count', counts: cnt };
+    const c = toCubie(f);
+    if (c.error) return { ok: false, code: c.error, at: c.at };
+    if (new Set(c.cp).size !== 8) return { ok: false, code: 'dupcorner' };
+    if (new Set(c.ep).size !== 12) return { ok: false, code: 'dupedge' };
+    if (c.co.reduce((a, b) => a + b, 0) % 3) return { ok: false, code: 'twist' };
+    if (c.eo.reduce((a, b) => a + b, 0) % 2) return { ok: false, code: 'flip' };
+    if (parity(c.cp) !== parity(c.ep)) return { ok: false, code: 'parity' };
+    return { ok: true, cubie: c };
+  }
+
+  // ---- tablas ----
+  let T = null;
+  const P2 = [0, 1, 2, 9, 10, 11, 4, 7, 13, 16];
+  const fact = [1, 1, 2, 6, 24, 120, 720, 5040, 40320];
+  function permIdx(p) { const n = p.length; let x = 0; for (let i = 0; i < n; i++) { let k = 0; for (let j = i + 1; j < n; j++) if (p[j] < p[i]) k++; x += k * fact[n - 1 - i]; } return x; }
+  function idxPerm(x, n) { const el = []; for (let i = 0; i < n; i++) el.push(i); const p = []; for (let i = 0; i < n; i++) { const f = fact[n - 1 - i], k = (x / f) | 0; x %= f; p.push(el.splice(k, 1)[0]); } return p; }
+  function init() {
+    if (T) return T;
+    const MV = [];
+    for (let m = 0; m < 18; m++) MV.push(toCubie(applyMove(SOLVED, m)));
+    const id = toCubie(SOLVED);
+    const maskIdx = new Int16Array(4096).fill(-1), masks = [];
+    for (let m = 0; m < 4096; m++) { let b = 0; for (let x = m; x; x >>= 1) b += x & 1; if (b === 4) { maskIdx[m] = masks.length; masks.push(m); } }
+    const twistOf = c => { let x = 0; for (let i = 0; i < 7; i++) x = x * 3 + c.co[i]; return x; };
+    const flipOf = c => { let x = 0; for (let i = 0; i < 11; i++) x = x * 2 + c.eo[i]; return x; };
+    const sliceOf = c => { let m = 0; for (let i = 0; i < 12; i++) if (c.ep[i] >= 8) m |= 1 << i; return maskIdx[m]; };
+    const twMove = new Uint16Array(2187 * 18), flMove = new Uint16Array(2048 * 18), slMove = new Uint16Array(495 * 18);
+    for (let x = 0; x < 2187; x++) {
+      const co = []; let s = 0, y = x; for (let i = 6; i >= 0; i--) { co[i] = y % 3; s += co[i]; y = (y / 3) | 0; } co[7] = (3 - s % 3) % 3;
+      const c = { cp: id.cp, co, ep: id.ep, eo: id.eo };
+      for (let m = 0; m < 18; m++) twMove[x * 18 + m] = twistOf(mul(c, MV[m]));
+    }
+    for (let x = 0; x < 2048; x++) {
+      const eo = []; let s = 0, y = x; for (let i = 10; i >= 0; i--) { eo[i] = y & 1; s += eo[i]; y >>= 1; } eo[11] = s & 1;
+      const c = { cp: id.cp, co: id.co, ep: id.ep, eo };
+      for (let m = 0; m < 18; m++) flMove[x * 18 + m] = flipOf(mul(c, MV[m]));
+    }
+    for (let x = 0; x < 495; x++) {
+      const ep = []; let a = 8, b = 0; for (let i = 0; i < 12; i++) ep.push(masks[x] >> i & 1 ? a++ : b++);
+      const c = { cp: id.cp, co: id.co, ep, eo: id.eo };
+      for (let m = 0; m < 18; m++) slMove[x * 18 + m] = sliceOf(mul(c, MV[m]));
+    }
+    const cpMove = new Uint16Array(40320 * 10), epMove = new Uint16Array(40320 * 10), spMove = new Uint8Array(24 * 10);
+    for (let x = 0; x < 40320; x++) {
+      const p = idxPerm(x, 8);
+      const c = { cp: p, co: id.co, ep: p.concat([8, 9, 10, 11]), eo: id.eo };
+      for (let k = 0; k < 10; k++) { const r = mul(c, MV[P2[k]]); cpMove[x * 10 + k] = permIdx(r.cp); epMove[x * 10 + k] = permIdx(r.ep.slice(0, 8)); }
+    }
+    for (let x = 0; x < 24; x++) {
+      const c = { cp: id.cp, co: id.co, ep: [0, 1, 2, 3, 4, 5, 6, 7].concat(idxPerm(x, 4).map(v => v + 8)), eo: id.eo };
+      for (let k = 0; k < 10; k++) spMove[x * 10 + k] = permIdx(mul(c, MV[P2[k]]).ep.slice(8).map(v => v - 8));
+    }
+    function bfs(size, start, nm, next) {
+      const d = new Int8Array(size).fill(-1), q = new Int32Array(size); let h = 0, t = 0; d[start] = 0; q[t++] = start;
+      while (h < t) { const s = q[h++], ds = d[s] + 1; for (let m = 0; m < nm; m++) { const n = next(s, m); if (d[n] < 0) { d[n] = ds; q[t++] = n; } } }
+      return d;
+    }
+    const SL0 = maskIdx[0xF00];
+    const prTw = bfs(495 * 2187, SL0 * 2187, 18, (s, m) => slMove[((s / 2187) | 0) * 18 + m] * 2187 + twMove[(s % 2187) * 18 + m]);
+    const prFl = bfs(495 * 2048, SL0 * 2048, 18, (s, m) => slMove[(s >> 11) * 18 + m] * 2048 + flMove[(s & 2047) * 18 + m]);
+    const prCp = bfs(40320 * 24, 0, 10, (s, k) => cpMove[((s / 24) | 0) * 10 + k] * 24 + spMove[(s % 24) * 10 + k]);
+    const prEp = bfs(40320 * 24, 0, 10, (s, k) => epMove[((s / 24) | 0) * 10 + k] * 24 + spMove[(s % 24) * 10 + k]);
+    T = { MV, twistOf, flipOf, sliceOf, twMove, flMove, slMove, cpMove, epMove, spMove, prTw, prFl, prCp, prEp, SL0 };
+    return T;
+  }
+
+  function search(cc, limit, budget) {
+    const t = init(), path = new Array(40), t0 = Date.now();
+    let best = null, bound = limit + 1, nodes = 0, stop = false;
+    function s2(cp, ep, sp, rem, last, depth) {
+      if (rem === 0) return cp === 0 && ep === 0 && sp === 0;
+      if (t.prCp[cp * 24 + sp] > rem || t.prEp[ep * 24 + sp] > rem) return false;
+      for (let k = 0; k < 10; k++) {
+        const face = (P2[k] / 3) | 0; if (face === last || face + 3 === last) continue;
+        path[depth] = P2[k];
+        if (s2(t.cpMove[cp * 10 + k], t.epMove[ep * 10 + k], t.spMove[sp * 10 + k], rem - 1, face, depth + 1)) return true;
+      }
+      return false;
+    }
+    function phase2(d1) {
+      let c = cc; for (let i = 0; i < d1; i++) c = mul(c, t.MV[path[i]]);
+      const cp = permIdx(c.cp), ep = permIdx(c.ep.slice(0, 8)), sp = permIdx(c.ep.slice(8).map(v => v - 8));
+      const last = d1 ? (path[d1 - 1] / 3) | 0 : -1, maxD = Math.min(bound - 1 - d1, 18);
+      for (let d = Math.max(t.prCp[cp * 24 + sp], t.prEp[ep * 24 + sp]); d <= maxD; d++)
+        if (s2(cp, ep, sp, d, last, d1)) { best = path.slice(0, d1 + d); bound = best.length; return; }
+    }
+    function s1(tw, fl, sl, rem, last, depth) {
+      if (stop) return;
+      if (rem === 0) { if (tw === 0 && fl === 0 && sl === t.SL0) phase2(depth); return; }
+      if (t.prTw[sl * 2187 + tw] > rem || t.prFl[sl * 2048 + fl] > rem) return;
+      if ((++nodes & 4095) === 0 && best && Date.now() - t0 > budget) { stop = true; return; }
+      for (let m = 0; m < 18; m++) {
+        const face = (m / 3) | 0; if (face === last || face + 3 === last) continue;
+        path[depth] = m;
+        s1(t.twMove[tw * 18 + m], t.flMove[fl * 18 + m], t.slMove[sl * 18 + m], rem - 1, face, depth + 1);
+        if (stop) return;
+      }
+    }
+    const tw = t.twistOf(cc), fl = t.flipOf(cc), sl = t.sliceOf(cc);
+    for (let d = 0; d < bound && d <= 12 && !stop; d++) {
+      s1(tw, fl, sl, d, -1, 0);
+      if (best && Date.now() - t0 > budget) break;
+    }
+    return best;
+  }
+  function simplify(mv) {
+    const out = [];
+    for (const m of mv) {
+      const l = out.length;
+      if (l && ((out[l - 1] / 3) | 0) === ((m / 3) | 0)) {
+        const k = (out[l - 1] % 3 + 1 + m % 3 + 1) % 4; out.pop();
+        if (k) out.push(((m / 3) | 0) * 3 + k - 1);
+      } else out.push(m);
+    }
+    return out;
+  }
+  // Devuelve la lista de movimientos (0..17 = cara*3 + giros-1) que resuelve el estado.
+  function solve(f, budget) {
+    const v = validate(f); if (!v.ok) return null;
+    let r = search(v.cubie, 24, budget || 700) || search(v.cubie, 30, budget || 700);
+    if (!r) return null;
+    r = simplify(r);
+    let s = f; for (const m of r) s = applyMove(s, m);
+    for (let i = 0; i < 54; i++) if (s[i] !== SOLVED[i]) return null;
+    return r;
+  }
+  const NAMES = 'URFDLB';
+  const moveName = m => NAMES[(m / 3) | 0] + ['', '2', "'"][m % 3];
+  function scramble(n) {
+    let s = SOLVED.slice(), last = -1;
+    for (let i = 0; i < (n || 25); i++) { let m; do { m = (Math.random() * 18) | 0; } while (((m / 3) | 0) === last); last = (m / 3) | 0; s = applyMove(s, m); }
+    return s;
+  }
+  const api = { NORMALS, FACELET, LOOKUP, key, facePos, applyMove, SOLVED, validate, solve, init, moveName, scramble };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.CubeCore = api;
+})(typeof self !== 'undefined' ? self : this);
+
+</script>
+<script>
+(function(){
+'use strict';
+const C = CubeCore, $ = id => document.getElementById(id);
+const COLORS = [
+  {n:'blanco', h:'#f3f4ef', rgb:[255,255,255]}, {n:'amarillo', h:'#ffd60a', rgb:[255,213,0]},
+  {n:'rojo', h:'#e0312d', rgb:[200,30,30]}, {n:'naranja', h:'#ff8a1f', rgb:[255,120,0]},
+  {n:'azul', h:'#2463eb', rgb:[0,70,200]}, {n:'verde', h:'#19a550', rgb:[0,160,70]}];
+const FACE_ES = ['Arriba','Derecha','Frente','Abajo','Izquierda','Atrás'];
+const SCAN = [2,1,5,4,0,3];
+const HINTS = [{},{left:2},{left:1},{left:5,right:2},{bottom:2,right:1,left:4,top:5},{top:2,right:1,left:4,bottom:5}];
+const STEPS = [
+  ['Pon una cara de frente','Elige cualquier cara. Fíjate cuál queda arriba e intenta mantenerla arriba en las cuatro primeras fotos.'],
+  ['Gira el cubo hacia la izquierda','Un cuarto de vuelta, como una peonza, para ver la cara que estaba a la derecha. La barra de color marca el lado donde quedó la cara anterior.'],
+  ['Gira otra vez hacia la izquierda','Ahora ves la cara de atrás. La de arriba sigue arriba.'],
+  ['Un giro más hacia la izquierda','Es la última cara lateral. Las barras de color muestran qué caras tiene a cada lado.'],
+  ['La cara de arriba','Vuelve a la primera cara y vuelca el cubo hacia la cámara: la cara de arriba queda mirando al lente y la primera cara queda abajo.'],
+  ['La cara de abajo','Vuelve a la primera cara y vuelca el cubo hacia atrás: la cara de abajo mira al lente y la primera cara queda arriba.']];
+
+let stickers = new Array(54).fill(-1);
+const rgbs = new Array(54).fill(null);
+let step = 0, moves = null, errAt = [], note = '', current = 'scan';
+
+function show(v){
+  current = v;
+  for (const s of ['scan','review','solve']) { $(s).classList.toggle('on', s===v); $('nav-'+s).setAttribute('aria-current', s===v); }
+  window.scrollTo(0,0);
+}
+$('nav-scan').onclick=()=>{ renderScan(); show('scan'); };
+$('nav-review').onclick=()=>{ renderReview(); show('review'); };
+$('nav-solve').onclick=()=>show('solve');
+
+/* ---------- cámara ---------- */
+const video = document.createElement('video'); video.playsInline = true; video.muted = true;
+let live = false;
+async function startCam(){
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:1280}},audio:false});
+    video.srcObject = s; await video.play(); live = true;
+  } catch(e){ live = false; }
+  renderScan(); if (moves) renderStep();
+}
+const camSrc = () => live && video.videoWidth ? {s:video,w:video.videoWidth,h:video.videoHeight} : null;
+function cover(c, src, size, z, dx, dy){ const k=Math.max(size/src.w,size/src.h)*z, w=src.w*k, h=src.h*k; c.drawImage(src.s, size/2-w/2+dx, size/2-h/2+dy, w, h); }
+function sample(c){ // color medio del centro de cada casilla del marco (lienzo de 480)
+  const cell=480*0.76/3, x0=480*0.12, R=16, out=[];
+  for (let k=0;k<9;k++){
+    const d=c.getImageData((x0+cell*(k%3+.5)-R)|0,(x0+cell*((k/3|0)+.5)-R)|0,R*2,R*2).data; let r=0,g=0,b=0;
+    for (let i=0;i<d.length;i+=4){ r+=d[i]; g+=d[i+1]; b+=d[i+2]; }
+    const n=d.length/4; out.push([r/n,g/n,b/n]);
+  }
+  return out;
+}
+function grid(el){ for (let i=0;i<9;i++){ const d=document.createElement('div'); d.appendChild(document.createElement('span')); el.appendChild(d); } }
+const dots=(el,cols)=>cols.forEach((v,k)=>el.children[k].firstChild.style.background='rgb('+v.map(Math.round)+')');
+
+/* ---------- 1. fotos ---------- */
+const view = $('view'), ctx = view.getContext('2d', {willReadFrequently:true});
+let img = null, zoom = 1, ox = 0, oy = 0, liveCols = null;
+const frame = $('frame'); grid(frame); grid($('ar-frame'));
+const facesEl = $('faces');
+SCAN.forEach((f,i)=>{ const b=document.createElement('button'); b.type='button';
+  b.innerHTML='<span class="mini">'+'<i></i>'.repeat(9)+'</span>'+FACE_ES[f]; b.onclick=()=>{step=i; img=null; renderScan();}; facesEl.appendChild(b); });
+
+function draw(){
+  ctx.fillStyle='#0d110b'; ctx.fillRect(0,0,480,480);
+  const src = img ? {s:img,w:img.width,h:img.height} : camSrc();
+  if (!src) { liveCols=null; return; }
+  cover(ctx, src, 480, zoom, img?ox:0, img?oy:0);
+  liveCols = sample(ctx); dots(frame, liveCols);
+}
+function renderScan(){
+  const f = SCAN[step];
+  $('scan-step').textContent='Foto '+(step+1)+' de 6 · '+FACE_ES[f];
+  $('scan-title').textContent=STEPS[step][0]; $('scan-text').textContent=STEPS[step][1];
+  [...facesEl.children].forEach((b,i)=>{ b.setAttribute('aria-current', i===step);
+    [...b.firstChild.children].forEach((c,k)=>{ const v=rgbs[SCAN[i]*9+k]; c.style.background = v?'rgb('+v.map(Math.round)+')':''; }); });
+  for (const side of ['top','bottom','left','right']){
+    const el = document.querySelector('.hint.'+side), hf = HINTS[step][side], v = hf===undefined?null:rgbs[hf*9+4];
+    el.style.display = v?'block':'none'; if (v) el.style.background='rgb('+v.map(Math.round)+')';
+  }
+  $('stage').classList.toggle('has', !!img); $('stage').classList.toggle('on', !!img||live);
+  $('zoom-row').classList.toggle('on', !!img||live); $('scan-tip').hidden=!img;
+  $('snap').hidden=!!img||!live; $('shot-btn').hidden=!!img||live;
+  $('use').hidden=!img; $('retry').hidden=!img||!live; $('reshot-btn').hidden=!img||live;
+  draw();
+}
+function loadFile(e, cb){
+  const file=e.target.files[0]; e.target.value=''; if(!file) return;
+  const im=new Image(); im.onload=()=>cb(im); im.src=URL.createObjectURL(file);
+}
+$('shot').onchange=$('reshot').onchange=e=>loadFile(e, im=>{ img=im; zoom=1; ox=oy=0; $('zoom').value=1; renderScan(); });
+function grab(){ const c=document.createElement('canvas'); c.width=video.videoWidth; c.height=video.videoHeight; c.getContext('2d').drawImage(video,0,0); return c; }
+$('snap').onclick=()=>{ if(!camSrc()) return; img=grab(); ox=oy=0; renderScan(); };
+$('retry').onclick=()=>{ img=null; renderScan(); };
+$('zoom').oninput=e=>{ const z=+e.target.value; ox*=z/zoom; oy*=z/zoom; zoom=z; if(img) draw(); };
+const ptr=new Map(); let pinch=0; const stage=$('stage');
+stage.onpointerdown=e=>{ if(!img) return; stage.setPointerCapture(e.pointerId); ptr.set(e.pointerId,[e.clientX,e.clientY]); pinch=0; };
+stage.onpointermove=e=>{
+  const p=ptr.get(e.pointerId); if(!p) return; const k=480/stage.clientWidth;
+  if (ptr.size===1){ ox+=(e.clientX-p[0])*k; oy+=(e.clientY-p[1])*k; }
+  ptr.set(e.pointerId,[e.clientX,e.clientY]);
+  if (ptr.size===2){ const [a,b]=[...ptr.values()], d=Math.hypot(a[0]-b[0],a[1]-b[1]);
+    if (pinch){ const z=Math.min(6,Math.max(1,zoom*d/pinch)); ox*=z/zoom; oy*=z/zoom; zoom=z; $('zoom').value=z; } pinch=d; }
+  draw();
+};
+stage.onpointerup=stage.onpointercancel=e=>{ ptr.delete(e.pointerId); pinch=0; };
+$('use').onclick=()=>{
+  if(!liveCols) return;
+  const f=SCAN[step]; for(let k=0;k<9;k++) rgbs[f*9+k]=liveCols[k].slice();
+  img=null;
+  const nextStep = SCAN.findIndex(x=>!rgbs[x*9]);
+  if (nextStep<0){ classify(); note=''; $('nav-review').disabled=false; renderScan(); renderReview(); show('review'); }
+  else { step=nextStep; renderScan(); window.scrollTo(0,0); }
+};
+
+function lab(c){
+  let [r,g,b]=c.map(v=>{v/=255; return v>0.04045?Math.pow((v+0.055)/1.055,2.4):v/12.92;});
+  let x=(r*0.4124+g*0.3576+b*0.1805)/0.95047, y=r*0.2126+g*0.7152+b*0.0722, z=(r*0.0193+g*0.1192+b*0.9505)/1.08883;
+  [x,y,z]=[x,y,z].map(v=>v>0.008856?Math.cbrt(v):7.787*v+16/116);
+  return [116*y-16,500*(x-y),200*(y-z)];
+}
+const dist=(a,b)=>Math.hypot((a[0]-b[0])*0.6,a[1]-b[1],a[2]-b[2]);
+function greedy(pairs, nA, cap){
+  pairs.sort((p,q)=>p[2]-q[2]); const res=new Array(nA).fill(-1), used={};
+  for (const [a,b] of pairs){ if(res[a]>=0||(used[b]||0)>=cap) continue; res[a]=b; used[b]=(used[b]||0)+1; }
+  return res;
+}
+function classify(){
+  const L=rgbs.map(lab), ref=COLORS.map(c=>lab(c.rgb));
+  let pairs=[]; for(let f=0;f<6;f++) for(let c=0;c<6;c++) pairs.push([f,c,dist(L[f*9+4],ref[c])]);
+  const centerColor=greedy(pairs,6,1);
+  pairs=[]; const idx=[]; for(let i=0;i<54;i++) if(i%9!==4) idx.push(i);
+  idx.forEach((i,a)=>{ for(let f=0;f<6;f++) pairs.push([a,f,dist(L[i],L[f*9+4])]); });
+  const face=greedy(pairs,48,8);
+  for(let f=0;f<6;f++) stickers[f*9+4]=centerColor[f];
+  idx.forEach((i,a)=>stickers[i]=centerColor[face[a]]);
+}
+
+/* ---------- 2. revisar ---------- */
+const NET=[[0,'2/1'],[4,'1/2'],[2,'2/2'],[1,'3/2'],[5,'4/2'],[3,'2/3']];
+const netEl=$('net'), pin=$('pin'), cells=[]; let editing=false, pinAt=-1, pendingFix=null;
+NET.forEach(([f,area])=>{ const [col,row]=area.split('/'); const w=document.createElement('div'); w.className='f'; w.style.gridColumn=col; w.style.gridRow=row;
+  w.innerHTML='<small>'+FACE_ES[f]+'</small>'; const g=document.createElement('div'); g.className='g';
+  for(let k=0;k<9;k++){ const b=document.createElement('button'); b.type='button'; const i=f*9+k; cells[i]=b; b.onclick=()=>openPin(i); g.appendChild(b); }
+  w.appendChild(g); netEl.appendChild(w); });
+COLORS.forEach((c,i)=>{ const b=document.createElement('button'); b.type='button'; b.style.background=c.h; b.title=c.n; b.setAttribute('aria-label',c.n);
+  b.onclick=()=>{ if(pinAt>=0){ stickers[pinAt]=i; note=''; } renderReview(); }; pin.appendChild(b); });
+function openPin(i){
+  if(!editing) return;
+  if(pinAt===i){ renderReview(); return; }
+  cells.forEach(b=>b.classList.remove('sel')); cells[i].classList.add('sel'); pinAt=i; pin.hidden=false;
+  const n=netEl.getBoundingClientRect(), r=cells[i].getBoundingClientRect(), w=pin.offsetWidth, h=pin.offsetHeight;
+  pin.style.left=Math.max(0,Math.min(n.width-w, r.left-n.left+r.width/2-w/2))+'px';
+  let top=r.top-n.top-h-8; if(top<0) top=r.bottom-n.top+8; pin.style.top=top+'px';
+}
+$('edit').onclick=()=>{ editing=!editing; renderReview(); };
+
+function faceState(){
+  const of={}; for(let f=0;f<6;f++){ const c=stickers[f*9+4]; if(of[c]!==undefined) return {msg:'Dos caras tienen el centro '+COLORS[c].n+'. Cada centro debe ser de un color distinto: cambia el que esté mal.'}; of[c]=f; }
+  return {f:stickers.map(c=>of[c])};
+}
+function check(){
+  errAt=[]; const fs=faceState(); if(fs.msg) return fs;
+  const cnt=[0,0,0,0,0,0]; stickers.forEach(c=>cnt[c]++);
+  const off=cnt.map((n,i)=>n!==9?COLORS[i].n+' '+n:'').filter(Boolean);
+  if (off.length) return {msg:'Debe haber 9 casillas de cada color. Ahora hay: '+off.join(', ')+'.'};
+  const v=C.validate(fs.f); if (v.ok) return {ok:true,f:fs.f};
+  errAt=v.at||[];
+  return {fixable:true, msg:'Estos colores no forman un cubo real. Compara cada cara con tu cubo y cambia el color que esté mal.'};
+}
+// Prueba los 4 giros de cada cara (4096 combinaciones) y elige la que forma un cubo real girando menos caras.
+const ROT=[6,3,0,7,4,1,8,5,2];
+function findFix(){
+  const fs=faceState().f, ver=[];
+  for(let f=0;f<6;f++){ let v=fs.slice(f*9,f*9+9); const a=[v]; for(let k=0;k<3;k++){ v=ROT.map(i=>v[i]); a.push(v); } ver.push(a); }
+  let best=null, bestCost=9; const seen=new Set();
+  for(let n=0;n<4096;n++){
+    const ks=[n&3,n>>2&3,n>>4&3,n>>6&3,n>>8&3,n>>10&3], st=[].concat(...ks.map((k,f)=>ver[f][k]));
+    if(!C.validate(st).ok) continue;
+    seen.add(st.join('')); const cost=ks.filter(Boolean).length;
+    if(cost<bestCost){ bestCost=cost; best=ks; }
+  }
+  return best && {ks:best, multi:seen.size>1};
+}
+$('fix').onclick=()=>{
+  if(!pendingFix) return; const turned=[];
+  pendingFix.ks.forEach((k,f)=>{ if(!k) return; turned.push(FACE_ES[f]); let v=stickers.slice(f*9,f*9+9); for(let j=0;j<k;j++) v=ROT.map(i=>v[i]); for(let j=0;j<9;j++) stickers[f*9+j]=v[j]; });
+  note='Acomodé '+turned.join(', ')+'. El cubo es válido.'+(pendingFix.multi?' Había más de una forma de acomodarlo: compáralo con tu cubo.':'');
+  renderReview();
+};
+function renderReview(){
+  const r=check(); pin.hidden=true; pinAt=-1;
+  netEl.classList.toggle('editing',editing);
+  cells.forEach((b,i)=>{ const c=stickers[i]; b.style.background=COLORS[c].h; b.classList.remove('sel'); b.classList.toggle('err',errAt.includes(i));
+    b.setAttribute('aria-label',FACE_ES[i/9|0]+' casilla '+(i%9+1)+': '+COLORS[c].n); });
+  pendingFix = r.fixable ? findFix() : null;
+  $('okline').hidden=!r.ok; $('okline').textContent=note||'El cubo es válido. Listo para resolver.';
+  $('fix').hidden=!pendingFix;
+  $('status').hidden=r.ok||!!pendingFix; $('status').textContent=r.msg||'';
+  $('edit').textContent=editing?'Listo':'Cambiar un color';
+  $('edit-text').textContent=editing?'Selecciona la casilla que quieras cambiar y elige su color.':'Si algún color salió distinto al de tu cubo, cámbialo aquí.';
+  $('solve-btn').disabled=!r.ok; $('solve-txt').textContent='Resolver';
+}
+$('solve-btn').onclick=()=>{
+  const r=check(); if(!r.ok) return;
+  $('solve-btn').disabled=true; $('solve-txt').textContent='Calculando…';
+  setTimeout(()=>{
+    moves=C.solve(r.f, 800);
+    if(!moves){ $('status').hidden=false; $('status').textContent='No encontré solución para este estado. Revisa los colores.'; $('solve-txt').textContent='Resolver'; return; }
+    editing=false; $('nav-solve').disabled=false; buildSolve(); show('solve'); $('solve-txt').textContent='Resolver'; $('solve-btn').disabled=false;
+    if(!live && navigator.mediaDevices) startCam();
+  }, 60);
+};
+
+/* ---------- 3. solución ---------- */
+const S=54, N=C.NORMALS, I3=[1,0,0,0,1,0,0,0,1];
+const FT=['rotateX(90deg)','rotateY(90deg)','','rotateX(-90deg)','rotateY(-90deg)','rotateY(180deg)'];
+let pos=0, cur=[], t0=0, tEnd=0, refs=[], ghostAt=-1e9, ghostPos=-1;
+const mm=(A,B)=>{ const o=[]; for(let r=0;r<3;r++) for(let c=0;c<3;c++) o.push(A[r*3]*B[c]+A[r*3+1]*B[3+c]+A[r*3+2]*B[6+c]); return o; };
+const mv3=(A,v)=>[A[0]*v[0]+A[1]*v[1]+A[2]*v[2],A[3]*v[0]+A[4]*v[1]+A[5]*v[2],A[6]*v[0]+A[7]*v[1]+A[8]*v[2]];
+function rotM(n,t){ const c=Math.cos(t), s=Math.sin(t), k=1-c, [x,y,z]=n;
+  return [c+k*x*x, k*x*y-s*z, k*x*z+s*y, k*y*x+s*z, c+k*y*y, k*y*z-s*x, k*z*x-s*y, k*z*y+s*x, c+k*z*z]; }
+function place(q,M){ q.el.style.transform='matrix3d('+[M[0],M[3],M[6],0,M[1],M[4],M[7],0,M[2],M[5],M[8],0,0,0,0,1].map(v=>+v.toFixed(5))+') translate3d('+q.p.map(v=>v*S+'px')+')'; }
+function makeCube(host){ // un cubo 3D animable; se usa para el cubo de apoyo y para el holograma
+  let cubies=[], anim=null;
+  const layer=f=>cubies.filter(q=>{ const v=mv3(q.O,q.p); return Math.round(v[0]*N[f][0]+v[1]*N[f][1]+v[2]*N[f][2])===1; });
+  const api={
+    get busy(){ return !!anim; },
+    build(state){
+      api.finish(); host.textContent=''; cubies=[];
+      for(let x=-1;x<=1;x++) for(let y=-1;y<=1;y++) for(let z=-1;z<=1;z++){
+        if(!x&&!y&&!z) continue; const p=[x,y,z], el=document.createElement('div'); el.className='cubie';
+        for(let d=0;d<6;d++){ const b=document.createElement('b'), out=p[0]*N[d][0]+p[1]*N[d][1]+p[2]*N[d][2]===1;
+          b.style.transform=FT[d]+' translateZ('+S/2+'px)'; b.style.background=out?COLORS[state[C.LOOKUP[C.key(p,N[d])]]].h:'#0b0e09'; el.appendChild(b); }
+        const q={el,p,O:I3.slice()}; place(q,q.O); host.appendChild(el); cubies.push(q);
+      }
+    },
+    turn(m, inverse, instant, dur, delay){
+      api.finish();
+      const f=m/3|0, k=m%3; let ang=[1,2,-1][k]*Math.PI/2; if(inverse) ang=-ang;
+      const qs=layer(f), end=()=>{ const R=rotM(N[f],ang).map(Math.round); qs.forEach(q=>{ q.O=mm(R,q.O); place(q,q.O); }); anim=null; };
+      dur = instant || reduced ? 0 : (dur || (k===1?520:380));
+      if(!dur){ end(); return; }
+      const s0=performance.now()+(delay||0);
+      anim={end, id:requestAnimationFrame(function tick(t){ let u=Math.max(0,Math.min(1,(t-s0)/dur)); u=u*u*(3-2*u);
+        if(u>=1){ end(); return; } const R=rotM(N[f],ang*u); qs.forEach(q=>place(q,mm(R,q.O))); anim.id=requestAnimationFrame(tick); })};
+    },
+    finish(){ if(anim){ cancelAnimationFrame(anim.id); anim.end(); } }
+  };
+  return api;
+}
+const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+const main3d=makeCube($('cube')), ghost=makeCube($('ghost-cube'));
+const FACE_ART=['de arriba','derecha','frontal','de abajo','izquierda','de atrás'];
+function describe(m){ const f=m/3|0;
+  return 'Gira la cara '+FACE_ART[f]+' (centro '+COLORS[stickers[f*9+4]].n+') '+['un cuarto de vuelta en sentido horario','media vuelta','un cuarto de vuelta en sentido antihorario'][m%3]+'.'; }
+const chip=f=>'<i class="chip" style="background:'+COLORS[stickers[f*9+4]].h+'"></i>';
+const fmt=ms=>{ const s=Math.floor(ms/1000); return String(s/60|0).padStart(2,'0')+':'+String(s%60).padStart(2,'0'); };
+const elapsed=()=>(tEnd||Date.now())-t0;
+function renderStep(){
+  const n=moves.length, solved=pos>=n;
+  if(solved && !tEnd) tEnd=Date.now();
+  $('count').textContent = n? (solved ? n+' movimientos' : 'Movimiento '+(pos+1)+' de '+n) : '';
+  $('mv').textContent = solved ? '✓' : C.moveName(moves[pos]);
+  $('mv-text').textContent = solved ? (n?'Cubo armado.':'Este cubo ya está armado.') : describe(moves[pos]);
+  $('prev').disabled=pos===0; $('next').disabled=solved;
+  [...$('alg').children].forEach((b,i)=>{ b.classList.toggle('done',i<pos); b.setAttribute('aria-current',i===pos); });
+  $('timer').textContent=fmt(elapsed());
+  $('done').hidden=!solved; $('done-time').textContent='Resuelto en '+fmt(elapsed());
+  $('final-snap').hidden=!live; $('final-btn').hidden=live;
+  $('ar-stage').hidden=!live; $('ar-status').hidden=!live||solved;
+  hitSince=0; ghostPos=-1;
+}
+function goTo(p){ main3d.build(stickers); cur=stickers.slice(); for(let i=0;i<p;i++){ main3d.turn(moves[i],false,true); cur=C.applyMove(cur,moves[i]); } pos=p; renderStep(); }
+function forward(){ if(pos>=moves.length) return; main3d.turn(moves[pos]); cur=C.applyMove(cur,moves[pos]); pos++; renderStep(); }
+function buildSolve(){
+  $('hold-main').innerHTML=chip(2)+'centro '+COLORS[stickers[22]].n+' al frente, '+chip(0)+'centro '+COLORS[stickers[4]].n+' arriba';
+  $('hold-rest').innerHTML=[[1,'a la derecha'],[4,'a la izquierda'],[5,'atrás'],[3,'abajo']].map(([f,t])=>'<li>'+chip(f)+COLORS[stickers[f*9+4]].n+' '+t+'</li>').join('');
+  const alg=$('alg'); alg.textContent='';
+  moves.forEach((m,i)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=C.moveName(m); b.title=describe(m); b.onclick=()=>goTo(i); alg.appendChild(b); });
+  $('copy').textContent='Copiar algoritmo';
+  refs=[]; for(let f=0;f<6;f++) refs[stickers[f*9+4]]=lab(rgbs[f*9+4]);
+  $('final-img').hidden=true; $('final-tip').hidden=true;
+  t0=Date.now(); tEnd=0; goTo(0);
+}
+$('next').onclick=forward;
+$('prev').onclick=()=>{ if(pos>0){ pos--; const m=moves[pos]; main3d.turn(m,true); cur=C.applyMove(cur,(m/3|0)*3+2-m%3); renderStep(); } };
+$('restart').onclick=()=>goTo(0);
+$('copy').onclick=()=>{ const t=moves.map(C.moveName).join(' ');
+  (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>$('copy').textContent='Copiado',()=>$('copy').textContent=t); };
+let rx=-26, ry=-36, drag=null; const scene=$('scene');
+const orient=()=>$('cube').style.transform='rotateX('+rx+'deg) rotateY('+ry+'deg)';
+scene.onpointerdown=e=>{ scene.setPointerCapture(e.pointerId); drag=[e.clientX,e.clientY]; };
+scene.onpointermove=e=>{ if(!drag) return; ry+=(e.clientX-drag[0])*.5; rx=Math.max(-80,Math.min(80,rx-(e.clientY-drag[1])*.5)); drag=[e.clientX,e.clientY]; orient(); };
+scene.onpointerup=scene.onpointercancel=()=>drag=null;
+orient();
+
+/* ---------- guía sobre la cámara: flechas encima del cubo y detección del giro ---------- */
+const ar=$('ar'), actx=ar.getContext('2d',{willReadFrequently:true});
+let hitSince=0, lastCheck=0;
+const X0=480*0.12, SZ=480*0.76, CELL=SZ/3;
+function chevron(c,x,y,ang,a){ c.save(); c.translate(x,y); c.rotate(ang); c.globalAlpha=a; c.beginPath(); c.moveTo(-13,-17); c.lineTo(9,0); c.lineTo(-13,17); c.stroke(); c.restore(); }
+function arrows(m,t){
+  const f=m/3|0, k=m%3, c=actx, ph=(t/900)%1, sign=k===2?-1:1;
+  c.save(); c.strokeStyle='#FFD23F'; c.fillStyle='rgba(255,210,63,.2)'; c.lineWidth=7; c.lineCap='round'; c.lineJoin='round'; c.shadowColor='#FFD23F'; c.shadowBlur=14;
+  const line=(x1,y1,x2,y2)=>{ const ang=Math.atan2(y2-y1,x2-x1); for(let i=0;i<4;i++){ const u=(ph+i/4)%1; chevron(c,x1+(x2-x1)*u,y1+(y2-y1)*u,ang,Math.sin(Math.PI*u)); } };
+  const arc=(r,dir)=>{ for(let i=0;i<8;i++){ const u=(ph/2+i/8)%1, a=dir*u*Math.PI*2-Math.PI/2; chevron(c,240+r*Math.cos(a),240+r*Math.sin(a),a+dir*Math.PI/2,.9); } };
+  const mid=i=>X0+CELL*(i+.5), a=X0+18, b=X0+SZ-18;
+  if(f===0||f===3){ const row=f===0?0:2, d=(f===0?-1:1)*sign; c.shadowBlur=0; c.fillRect(X0,X0+CELL*row,SZ,CELL); c.shadowBlur=14; d<0?line(b,mid(row),a,mid(row)):line(a,mid(row),b,mid(row)); }
+  else if(f===1||f===4){ const col=f===1?2:0, d=(f===1?-1:1)*sign; c.shadowBlur=0; c.fillRect(X0+CELL*col,X0,CELL,SZ); c.shadowBlur=14; d<0?line(mid(col),b,mid(col),a):line(mid(col),a,mid(col),b); }
+  else if(f===2) arc(118,sign);
+  else { c.setLineDash([2,14]); c.beginPath(); c.arc(240,240,214,0,Math.PI*2); c.globalAlpha=.5; c.stroke(); c.setLineDash([]); c.globalAlpha=1; arc(214,-sign); }
+  c.shadowBlur=0; c.fillStyle='#FFD23F'; c.font='700 34px Rubik, sans-serif'; c.textBaseline='top';
+  c.fillText(C.moveName(m)+(f===5?' · atrás':''),14,10);
+  c.restore();
+}
+function detect(cols, now){
+  const cls=cols.map(v=>{ const L=lab(v); let b=0, bd=1e9; refs.forEach((r,i)=>{ const d=dist(L,r); if(d<bd){bd=d;b=i;} }); return b; });
+  const before=cur.slice(18,27), after=C.applyMove(cur,moves[pos]).slice(18,27);
+  let ch=0,chA=0,chB=0,un=0,unOk=0;
+  for(let k=0;k<9;k++){ if(after[k]!==before[k]){ ch++; if(cls[k]===after[k]) chA++; else if(cls[k]===before[k]) chB++; } else { un++; if(cls[k]===before[k]) unOk++; } }
+  const st=$('ar-status');
+  if(!ch){ st.textContent='Este giro no se ve desde el frente. Hazlo y toca Siguiente.'; hitSince=0; return; }
+  st.textContent = unOk+chB+chA>=7 ? 'Cubo en posición. Repite el giro que hace el cubo transparente.' : 'Pon la cara de centro '+COLORS[stickers[22]].n+' dentro de la rejilla, con el centro '+COLORS[stickers[4]].n+' arriba.';
+  const hit = chA>=Math.ceil(ch*2/3) && chA>chB && unOk>=Math.ceil(un*2/3);
+  if(!hit){ hitSince=0; return; }
+  if(!hitSince) hitSince=now; else if(now-hitSince>450 && !main3d.busy) forward();
+}
+function frameLoop(t){
+  requestAnimationFrame(frameLoop);
+  if(current==='scan' && live && !img) draw();
+  if(current==='solve' && moves){
+    if(!tEnd) $('timer').textContent=fmt(elapsed());
+    const src=camSrc(); if(!src) return;
+    actx.fillStyle='#0d110b'; actx.fillRect(0,0,480,480); cover(actx,src,480,zoom,0,0);
+    if(pos<moves.length){
+      if(t-lastCheck>140){ lastCheck=t; const cols=sample(actx); dots($('ar-frame'),cols); detect(cols,t); }
+      arrows(moves[pos],t);
+      // holograma: el cubo virtual repite el giro pendiente encima del cubo real
+      if(!reduced && (ghostPos!==pos || t-ghostAt>2300)){ ghostPos=pos; ghostAt=t; ghost.build(cur); ghost.turn(moves[pos],false,false,1100,450); }
+    }
+    $('ghost').hidden=reduced||pos>=moves.length;
+    const gk=$('ar-stage').clientWidth*0.76/162; $('ghost-cube').style.transform='scale3d('+gk+','+gk+','+gk+') translateZ(-81px)';
+  }
+}
+requestAnimationFrame(frameLoop);
+
+/* ---------- foto final con el tiempo ---------- */
+function compose(src){
+  const c=document.createElement('canvas'); c.width=c.height=900; const x=c.getContext('2d');
+  cover(x,src,900,1,0,0);
+  const g=x.createLinearGradient(0,560,0,900); g.addColorStop(0,'rgba(31,39,27,0)'); g.addColorStop(1,'rgba(31,39,27,.95)'); x.fillStyle=g; x.fillRect(0,560,900,340);
+  x.fillStyle='#FFD23F'; x.font='700 120px Rubik, sans-serif'; x.textBaseline='alphabetic'; x.fillText(fmt(elapsed()),48,840);
+  x.fillStyle='#F3FCF0'; x.font='500 36px Rubik, sans-serif'; x.fillText('Cubo resuelto en',50,720);
+  x.textAlign='right'; x.fillText(moves.length+' giros',852,840);
+  c.toBlob(b=>{ const im=$('final-img'); im.src=URL.createObjectURL(b); im.hidden=false; $('final-tip').hidden=false; },'image/jpeg',.9);
+}
+$('final-snap').onclick=()=>{ const s=camSrc(); if(s) compose(s); };
+$('final-file').onchange=e=>loadFile(e, im=>compose({s:im,w:im.width,h:im.height}));
+$('home').onclick=()=>{
+  rgbs.fill(null); stickers.fill(-1); moves=null; step=0; img=null; note=''; editing=false;
+  $('nav-review').disabled=true; $('nav-solve').disabled=true; renderScan(); show('scan');
+};
+
+renderScan(); show('scan');
+if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) startCam();
+setTimeout(()=>C.init(), 400);
+
+})();
+</script>
+</body>
+</html>
