@@ -68,6 +68,7 @@ section.on{display:flex}
 .hint.top,.hint.bottom{left:38%;width:24%;height:5%}
 .hint.left,.hint.right{top:38%;height:24%;width:5%}
 .hint.top{top:3.5%}.hint.bottom{bottom:3.5%}.hint.left{left:3.5%}.hint.right{right:3.5%}
+.autobar{position:absolute;left:0;bottom:0;height:8px;width:0;background:var(--yellow);pointer-events:none}
 .empty{position:absolute;inset:12%;display:flex;align-items:center;justify-content:center;text-align:center;padding:14%;color:rgba(243,252,240,.75);font-size:14px;pointer-events:none}
 .stage.on .empty{display:none}
 input[type=range]{width:100%;accent-color:var(--yellow)}
@@ -143,6 +144,7 @@ details dd{margin:0}
       <div class="frame" id="frame"></div>
       <i class="hint top"></i><i class="hint bottom"></i><i class="hint left"></i><i class="hint right"></i>
       <div class="empty">Encaja la cara del cubo dentro de este marco</div>
+      <i class="autobar" id="autobar"></i>
     </div>
     <div class="zoom" id="zoom-row"><label for="zoom">Acercar</label><input id="zoom" type="range" min="1" max="6" step="0.01" value="1"></div>
     <p class="small muted" id="scan-tip">Arrastra la foto y acércala hasta que las 9 casillas queden dentro de la cuadrícula.</p>
@@ -153,6 +155,7 @@ details dd{margin:0}
       <button id="retry" type="button" hidden>Repetir foto</button>
       <span class="btn filebtn" id="reshot-btn" hidden><span>Repetir foto</span><input id="reshot" type="file" accept="image/*" capture="environment" aria-label="Repetir foto"></span>
     </div>
+    <button id="redo" type="button" hidden>Repetir foto anterior</button>
   </section>
 
   <!-- 2. Revisar -->
@@ -192,6 +195,7 @@ details dd{margin:0}
         <button class="primary" id="next" type="button">Siguiente</button>
       </div>
     </div>
+    <button class="link" id="lost" type="button">¿Te equivocaste y la app no lo detecta? Vuelve a tomar las fotos</button>
     <div class="card done-card" id="done" hidden>
       <span class="step">Cubo armado</span>
       <span class="big" id="done-time"></span>
@@ -486,11 +490,12 @@ async function startCam(){
 const camSrc = () => live && video.videoWidth ? {s:video,w:video.videoWidth,h:video.videoHeight} : null;
 function cover(c, src, size, z, dx, dy){ const k=Math.max(size/src.w,size/src.h)*z, w=src.w*k, h=src.h*k; c.drawImage(src.s, size/2-w/2+dx, size/2-h/2+dy, w, h); }
 function sample(c){ // color medio del centro de cada casilla del marco (lienzo de 480)
-  const cell=480*0.76/3, x0=480*0.12, R=16, out=[];
+  const cell=480*0.76/3, x0=480*0.12, R=16, out=[]; out.sd=[];
   for (let k=0;k<9;k++){
-    const d=c.getImageData((x0+cell*(k%3+.5)-R)|0,(x0+cell*((k/3|0)+.5)-R)|0,R*2,R*2).data; let r=0,g=0,b=0;
-    for (let i=0;i<d.length;i+=4){ r+=d[i]; g+=d[i+1]; b+=d[i+2]; }
-    const n=d.length/4; out.push([r/n,g/n,b/n]);
+    const d=c.getImageData((x0+cell*(k%3+.5)-R)|0,(x0+cell*((k/3|0)+.5)-R)|0,R*2,R*2).data; let r=0,g=0,b=0,q=0;
+    for (let i=0;i<d.length;i+=4){ r+=d[i]; g+=d[i+1]; b+=d[i+2]; q+=d[i]*d[i]+d[i+1]*d[i+1]+d[i+2]*d[i+2]; }
+    const n=d.length/4; r/=n; g/=n; b/=n; out.push([r,g,b]);
+    out.sd.push(Math.sqrt(Math.max(0,q/n-r*r-g*g-b*b)/3)); // qué tan parejo es el color dentro de la casilla
   }
   return out;
 }
@@ -503,7 +508,7 @@ let img = null, zoom = 1, ox = 0, oy = 0, liveCols = null;
 const frame = $('frame'); grid(frame); grid($('ar-frame'));
 const facesEl = $('faces');
 SCAN.forEach((f,i)=>{ const b=document.createElement('button'); b.type='button';
-  b.innerHTML='<span class="mini">'+'<i></i>'.repeat(9)+'</span>'+FACE_ES[f]; b.onclick=()=>{step=i; img=null; renderScan();}; facesEl.appendChild(b); });
+  b.innerHTML='<span class="mini">'+'<i></i>'.repeat(9)+'</span>'+FACE_ES[f]; b.onclick=()=>{step=i; img=null; rgbs.fill(null,f*9,f*9+9); renderScan();}; facesEl.appendChild(b); });
 
 function draw(){
   ctx.fillStyle='#0d110b'; ctx.fillRect(0,0,480,480);
@@ -523,7 +528,9 @@ function renderScan(){
     el.style.display = v?'block':'none'; if (v) el.style.background='rgb('+v.map(Math.round)+')';
   }
   $('stage').classList.toggle('has', !!img); $('stage').classList.toggle('on', !!img||live);
-  $('zoom-row').classList.toggle('on', !!img||live); $('scan-tip').hidden=!img;
+  $('zoom-row').classList.toggle('on', !!img||live); $('scan-tip').hidden=!img&&!live;
+  $('scan-tip').textContent = img ? 'Arrastra la foto y acércala hasta que las 9 casillas queden dentro de la cuadrícula.' : 'Mantén el cubo quieto dentro de la cuadrícula: la foto se toma sola cuando se reconocen los 9 colores.';
+  $('redo').hidden = lastSaved<0 || !!img;
   $('snap').hidden=!!img||!live; $('shot-btn').hidden=!!img||live;
   $('use').hidden=!img; $('retry').hidden=!img||!live; $('reshot-btn').hidden=!img||live;
   draw();
@@ -548,14 +555,34 @@ stage.onpointermove=e=>{
   draw();
 };
 stage.onpointerup=stage.onpointercancel=e=>{ ptr.delete(e.pointerId); pinch=0; };
-$('use').onclick=()=>{
+$('use').onclick=saveFace;
+function saveFace(){
   if(!liveCols) return;
-  const f=SCAN[step]; for(let k=0;k<9;k++) rgbs[f*9+k]=liveCols[k].slice();
+  const f=SCAN[step]; lastSaved=step; for(let k=0;k<9;k++) rgbs[f*9+k]=liveCols[k].slice();
   img=null;
   const nextStep = SCAN.findIndex(x=>!rgbs[x*9]);
   if (nextStep<0){ classify(); note=''; $('nav-review').disabled=false; renderScan(); renderReview(); show('review'); }
   else { step=nextStep; renderScan(); window.scrollTo(0,0); }
-};
+}
+// Foto automática: se guarda la cara cuando las 9 casillas tienen color parejo y vivo,
+// hay más de un color, el centro no es el de una cara ya guardada y la imagen lleva ~1 s quieta.
+let prevL=null, stableSince=0, lastSaved=-1;
+const bar=v=>$('autobar').style.width=(v*100)+'%';
+function autoCheck(t){
+  const f=SCAN[step]; if(rgbs[f*9]||!liveCols||img){ bar(0); stableSince=0; return; }
+  const L=liveCols.map(lab);
+  const uniform=liveCols.sd.filter(v=>v<28).length>=8;
+  const vivid=liveCols.filter(c=>{ const mx=Math.max(...c), mn=Math.min(...c); return mx>140||(mx>60&&(mx-mn)/mx>.3); }).length>=8;
+  let spread=0; for(let i=0;i<9;i++) for(let j=i+1;j<9;j++) spread=Math.max(spread,dist(L[i],L[j]));
+  const fresh=SCAN.every(g=>g===f||!rgbs[g*9]||dist(L[4],lab(rgbs[g*9+4]))>16);
+  const still=!!prevL&&L.every((v,k)=>dist(v,prevL[k])<7);
+  prevL=L;
+  if(!(uniform&&vivid&&spread>22&&fresh&&still)){ stableSince=0; bar(0); return; }
+  if(!stableSince) stableSince=t;
+  const p=(t-stableSince)/1100; bar(Math.min(1,p));
+  if(p>=1){ stableSince=0; prevL=null; bar(0); saveFace(); }
+}
+$('redo').onclick=()=>{ if(lastSaved<0) return; step=lastSaved; lastSaved=-1; img=null; const f=SCAN[step]; rgbs.fill(null,f*9,f*9+9); prevL=null; renderScan(); };
 
 function lab(c){
   let [r,g,b]=c.map(v=>{v/=255; return v>0.04045?Math.pow((v+0.055)/1.055,2.4):v/12.92;});
@@ -710,7 +737,7 @@ function renderStep(){
   $('prev').disabled=pos===0; $('next').disabled=solved;
   [...$('alg').children].forEach((b,i)=>{ b.classList.toggle('done',i<pos); b.setAttribute('aria-current',i===pos); });
   $('timer').textContent=fmt(elapsed());
-  $('done').hidden=!solved; $('done-time').textContent='Resuelto en '+fmt(elapsed());
+  $('done').hidden=!solved; $('lost').hidden=solved; $('done-time').textContent='Resuelto en '+fmt(elapsed());
   $('final-snap').hidden=!live; $('final-btn').hidden=live;
   $('ar-stage').hidden=!live; $('ar-status').hidden=!live||solved;
   hitSince=0; ghostPos=-1;
@@ -720,15 +747,15 @@ function renderStep(){
 }
 function goTo(p){ main3d.build(stickers); cur=stickers.slice(); for(let i=0;i<p;i++){ main3d.turn(moves[i],false,true); cur=C.applyMove(cur,moves[i]); } pos=p; renderStep(); }
 function forward(){ if(pos>=moves.length) return; main3d.turn(moves[pos]); cur=C.applyMove(cur,moves[pos]); pos++; renderStep(); }
-function buildSolve(){
+function buildSolve(keep){
   $('hold-main').innerHTML=chip(2)+'centro '+COLORS[stickers[22]].n+' al frente, '+chip(0)+'centro '+COLORS[stickers[4]].n+' arriba';
   $('hold-rest').innerHTML=[[1,'a la derecha'],[4,'a la izquierda'],[5,'atrás'],[3,'abajo']].map(([f,t])=>'<li>'+chip(f)+COLORS[stickers[f*9+4]].n+' '+t+'</li>').join('');
   const alg=$('alg'); alg.textContent='';
   moves.forEach((m,i)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=C.moveName(m); b.title=describe(m); b.onclick=()=>goTo(i); alg.appendChild(b); });
   $('copy').textContent='Copiar algoritmo';
   refs=[]; for(let f=0;f<6;f++) refs[stickers[f*9+4]]=lab(rgbs[f*9+4]);
-  $('final-img').hidden=true; $('final-tip').hidden=true;
-  t0=Date.now(); tEnd=0; goTo(0);
+  if(!keep){ $('final-img').hidden=true; $('final-tip').hidden=true; t0=Date.now(); tEnd=0; notice=''; }
+  goTo(0);
 }
 $('next').onclick=forward;
 $('prev').onclick=()=>{ if(pos>0){ pos--; const m=moves[pos]; main3d.turn(m,true); cur=C.applyMove(cur,(m/3|0)*3+2-m%3); renderStep(); } };
@@ -744,7 +771,7 @@ orient();
 
 /* ---------- guía sobre la cámara: flechas encima del cubo y detección del giro ---------- */
 const ar=$('ar'), actx=ar.getContext('2d',{willReadFrequently:true});
-let hitSince=0, lastCheck=0;
+let hitSince=0, lastCheck=0, wrongSince=0, wrongM=-1, notice='', noticeUntil=0;
 const X0=480*0.12, SZ=480*0.76, CELL=SZ/3;
 function chevron(c,x,y,ang,a){ c.save(); c.translate(x,y); c.rotate(ang); c.globalAlpha=a; c.beginPath(); c.moveTo(-13,-17); c.lineTo(9,0); c.lineTo(-13,17); c.stroke(); c.restore(); }
 function arrows(m,t){
@@ -772,13 +799,34 @@ function detect(cols, now){
   const st=$('ar-status');
   if(!ch){ st.textContent='Este giro es en la cara de atrás. Gírala hacia donde apunta la flecha, tal como la ves desde el frente, y toca Siguiente.'; hitSince=0; return; }
   st.textContent = unOk+chB+chA>=7 ? 'Cubo en posición. Repite el giro que hace el cubo transparente.' : 'Pon la cara de centro '+COLORS[stickers[22]].n+' dentro de la rejilla, con el centro '+COLORS[stickers[4]].n+' arriba.';
-  const hit = chA>=Math.ceil(ch*2/3) && chA>chB && unOk>=Math.ceil(un*2/3);
-  if(!hit){ hitSince=0; return; }
-  if(!hitSince) hitSince=now; else if(now-hitSince>450 && !main3d.busy) forward();
+  if(now<noticeUntil) st.textContent=notice;
+  const hit = chA>=ch-(ch>=6?2:ch>=4?1:0) && chA>chB && unOk>=Math.ceil(un*2/3); // con pocas casillas cambiadas se exigen todas
+  if(hit){ wrongSince=0; if(!hitSince) hitSince=now; else if(now-hitSince>450 && !main3d.busy) forward(); return; }
+  hitSince=0;
+  // ¿Hizo un giro distinto al indicado? Compara la cara frontal con la que dejaría cada uno de los otros giros.
+  const score=fr=>fr.reduce((n,v,k)=>n+(cls[k]===v),0), same=(a,b)=>a.every((v,k)=>v===b[k]), exp=moves[pos], sB=score(before), sA=score(after);
+  let cand=-1, candFr=null, candSc=0;
+  for(let m2=0;m2<18;m2++){
+    if(m2===exp || (exp%3===1 && (m2/3|0)===(exp/3|0))) continue; // un medio giro pasa por el cuarto de giro: no es error
+    const fr=C.applyMove(cur,m2).slice(18,27); if(same(fr,before)||same(fr,after)) continue;
+    const sc=score(fr); if(sc<8||sc<=sB||sc<=sA) continue;
+    if(cand>=0 && same(fr,candFr)){ cand=-2; break; }        // dos giros dejan la misma cara: no se puede saber cuál fue
+    if(sc>candSc){ cand=m2; candFr=fr; candSc=sc; }
+  }
+  if(cand<0){ wrongSince=0; wrongM=-1; return; }
+  if(cand!==wrongM){ wrongM=cand; wrongSince=now; return; }
+  if(now-wrongSince>1000 && !main3d.busy){ wrongSince=0; wrongM=-1; reroute(cand, now); }
+}
+function reroute(m2, now){ // el usuario hizo m2: se calcula una solución nueva desde el estado real
+  const state=C.applyMove(cur,m2), of={}; for(let f=0;f<6;f++) of[state[f*9+4]]=f;
+  const r=C.solve(state.map(c=>of[c]),500); if(!r) return;
+  stickers=state; moves=r; buildSolve(true);
+  notice='Detecté un giro distinto ('+C.moveName(m2)+'). Calculé una solución nueva desde donde estás.'; noticeUntil=now+7000;
+  $('ar-status').textContent=notice;
 }
 function frameLoop(t){
   requestAnimationFrame(frameLoop);
-  if(current==='scan' && live && !img) draw();
+  if(current==='scan' && live && !img){ draw(); if(t-lastCheck>120){ lastCheck=t; autoCheck(t); } }
   if(current==='solve' && moves){
     if(!tEnd) $('timer').textContent=fmt(elapsed());
     const src=camSrc(); if(!src) return;
@@ -807,8 +855,9 @@ function compose(src){
 }
 $('final-snap').onclick=()=>{ const s=camSrc(); if(s) compose(s); };
 $('final-file').onchange=e=>loadFile(e, im=>compose({s:im,w:im.width,h:im.height}));
+$('lost').onclick=()=>$('home').click();
 $('home').onclick=()=>{
-  rgbs.fill(null); stickers.fill(-1); moves=null; step=0; img=null; note=''; editing=false;
+  rgbs.fill(null); stickers.fill(-1); moves=null; step=0; img=null; note=''; editing=false; lastSaved=-1; prevL=null;
   $('nav-review').disabled=true; $('nav-solve').disabled=true; renderScan(); show('scan');
 };
 
