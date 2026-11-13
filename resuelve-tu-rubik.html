@@ -577,7 +577,18 @@ function fitGrid(m){ // mínimos cuadrados: centro y ejes de la retícula; devue
   let e=0; for(const q of m) e+=Math.hypot(X[0]+X[1]*q.i+X[2]*q.j-q.b.x, Y[0]+Y[1]*q.i+Y[2]*q.j-q.b.y);
   return {X,Y,err:e/m.length/Math.sqrt(Math.abs(X[1]*Y[2]-Y[1]*X[2]))};
 }
-function detectFaces(src,max){ // hasta `max` caras, también vistas en diagonal (retículas inclinadas)
+function fitHomo(m){ // homografía (plano visto en perspectiva) de la retícula 3×3 a la imagen
+  const A=[...Array(8)].map(()=>new Array(8).fill(0)), r=new Array(8).fill(0), S=100;
+  const addRow=(row,val)=>{ for(let a=0;a<8;a++){ if(!row[a]) continue; r[a]+=row[a]*val; for(let c=0;c<8;c++) A[a][c]+=row[a]*row[c]; } };
+  for(const q of m){ const x=q.b.x/S, y=q.b.y/S, i=q.i, j=q.j;
+    addRow([i,j,1,0,0,0,-x*i,-x*j],x); addRow([0,0,0,i,j,1,-y*i,-y*j],y); }
+  const h=solveN(A,r); if(!h) return null;
+  const H=(i,j)=>{ const w=h[6]*i+h[7]*j+1; return [S*(h[0]*i+h[1]*j+h[2])/w, S*(h[3]*i+h[4]*j+h[5])/w]; };
+  const c=H(0,0), u=H(1,0), v=H(0,1), ux=u[0]-c[0], uy=u[1]-c[1], vx=v[0]-c[0], vy=v[1]-c[1], cell=Math.sqrt(Math.abs(ux*vy-uy*vx))||1;
+  let e=0; for(const q of m){ const p=H(q.i,q.j); e+=Math.hypot(p[0]-q.b.x,p[1]-q.b.y); }
+  return {H,c,u:[ux,uy],v:[vx,vy],err:e/m.length/cell};
+}
+function detectFaces(src,max){ // hasta `max` caras, también vistas en diagonal y en perspectiva
   let cand=findBlobs(src,.28,3.6,.32,TW2); const out=[], k=480/TW2;
   if(cand.length>130) return out;
   for(let round=0; round<max && cand.length>=7; round++){
@@ -588,23 +599,27 @@ function detectFaces(src,max){ // hasta `max` caras, también vistas en diagonal
       for(const A of nb) for(const B of nb){
         if(A===B) continue; const ux=A.n.x-b.x, uy=A.n.y-b.y, vx=B.n.x-b.x, vy=B.n.y-b.y, cr=ux*vy-uy*vx;
         if(cr<=0||cr/(A.d*B.d)<.45||A.d/B.d<.3||A.d/B.d>3.3) continue;
-        const tol=Math.min(A.d,B.d)*.3, m=[{i:0,j:0,b:b}], used=new Set([b]);
+        const tol=Math.min(A.d,B.d)*.36, m=[{i:0,j:0,b:b}], used=new Set([b]);
         for(let j=-1;j<=1;j++) for(let i=-1;i<=1;i++){ if(!i&&!j) continue;
           const px=b.x+i*ux+j*vx, py=b.y+i*uy+j*vy; let hit=null, hd=tol;
           for(const c of cand){ if(used.has(c)||c.a/b.a<.35||c.a/b.a>2.8) continue; const dd=Math.hypot(c.x-px,c.y-py); if(dd<hd){ hd=dd; hit=c; } }
           if(hit){ used.add(hit); m.push({i,j,b:hit}); } }
         if(m.length<7||(best&&m.length<best.m.length)) continue;
-        const g=fitGrid(m); if(!g) continue;
-        if(!best||m.length>best.m.length||g.err<best.g.err){ best={m,g}; }
+        const g=fitHomo(m); if(!g) continue;
+        if(!best||m.length>best.m.length||g.err<best.g.err) best={m,g};
       }
     }
     if(!best) break;
-    const {X,Y}=best.g, gone=new Set(best.m.map(q=>q.b)); cand=cand.filter(c=>!gone.has(c));
-    let u=[X[1],Y[1]], v=[X[2],Y[2]]; if(u[0]*v[1]-u[1]*v[0]<0) v=[-v[0],-v[1]];
-    const seq=[u,v,[-u[0],-u[1]],[-v[0],-v[1]]], ui=seq.reduce((bi,a,i)=>a[0]>seq[bi][0]?i:bi,0); u=seq[ui]; v=seq[(ui+1)%4];   // u hacia la derecha, sin espejar
+    const g=best.g, gone=new Set(best.m.map(q=>q.b)); cand=cand.filter(c=>!gone.has(c));
+    if(g.err>.12) continue;                                   // no es un plano: probablemente cruza el borde del cubo
+    // orientar: u hacia la derecha, sin espejar; guardar los 9 puntos reales de la cara
+    const flip=g.u[0]*g.v[1]-g.u[1]*g.v[0]<0, v0=flip?[-g.v[0],-g.v[1]]:g.v, seq=[g.u,v0,[-g.u[0],-g.u[1]],[-v0[0],-v0[1]]];
+    const ui=seq.reduce((bi,a,i)=>a[0]>seq[bi][0]?i:bi,0), u=seq[ui], v=seq[(ui+1)%4];
+    const back=(i,j)=>{ let a,b; if(ui===0){a=i;b=j;} else if(ui===1){a=-j;b=i;} else if(ui===2){a=-i;b=-j;} else {a=j;b=-i;} return [a, flip?-b:b]; };
     const lu=Math.hypot(u[0],u[1])*k, lv=Math.hypot(v[0],v[1])*k, cos=(u[0]*v[0]+u[1]*v[1])*k*k/(lu*lv);
-    if(best.g.err>.18||lu<9||lu>150||lv<9||lv>150||lu/lv<.3||lu/lv>3.3||Math.abs(cos)>.85) continue;
-    out.push({cx:(X[0]+.5)*k,cy:(Y[0]+.5)*k,ux:u[0]*k,uy:u[1]*k,vx:v[0]*k,vy:v[1]*k,n:best.m.length});
+    if(lu<9||lu>150||lv<9||lv>150||lu/lv<.3||lu/lv>3.3||Math.abs(cos)>.85) continue;
+    const pts=[]; for(let q=0;q<9;q++){ const [a,b]=back(q%3-1,(q/3|0)-1), hit=best.m.find(o=>o.i===a&&o.j===b), p=hit?[hit.b.x,hit.b.y]:g.H(a,b); pts.push([(p[0]+.5)*k,(p[1]+.5)*k]); }
+    out.push({cx:(g.c[0]+.5)*k,cy:(g.c[1]+.5)*k,ux:u[0]*k,uy:u[1]*k,vx:v[0]*k,vy:v[1]*k,n:best.m.length,pts});
   }
   return out;
 }
@@ -858,7 +873,7 @@ function renderStep(){
   $('final-snap').hidden=!live; $('final-btn').hidden=live;
   $('hold-note').textContent=live?'Puedes girar el cubo entero para mostrar otras caras: la app reconoce cada una por el color de su centro.':'No gires el cubo entero mientras resuelves: solo las caras que indica cada paso.';
   $('ar-stage').hidden=!live; $('ar-status').hidden=!live||solved; $('follow-row2').hidden=!live||solved;
-  hitSince=0; ghostPos=-1;
+  decKey=''; ghostPos=-1;
   const st=$('ar-stage'), big=pos>0&&!solved, grew=big&&!st.classList.contains('big');
   st.classList.toggle('big',big); // tras el primer giro, la cámara ocupa todo el ancho
   if(grew&&live) setTimeout(()=>st.scrollIntoView({block:'start',behavior:reduced?'auto':'smooth'}),380);
@@ -871,7 +886,8 @@ function buildSolve(keep){
   const alg=$('alg'); alg.textContent='';
   moves.forEach((m,i)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=C.moveName(m); b.title=describe(m); b.onclick=()=>goTo(i); alg.appendChild(b); });
   $('copy').textContent='Copiar algoritmo';
-  refs=[]; for(let f=0;f<6;f++) refs[stickers[f*9+4]]=lab(rgbs[f*9+4]);
+  if(!keep){ refs=[]; const acc=[]; for(let i=0;i<54;i++){ const c=stickers[i]; if(!rgbs[i]) continue; const L=lab(rgbs[i]); (acc[c]=acc[c]||[]).push(L); }
+    acc.forEach((ls,c)=>{ refs[c]=[0,1,2].map(q=>ls.reduce((a,l)=>a+l[q],0)/ls.length); }); }
   if(!keep){ $('final-img').hidden=true; $('final-tip').hidden=true; t0=Date.now(); tEnd=0; notice=''; }
   goTo(0);
 }
@@ -892,73 +908,170 @@ orient();
    orientación sale de la cara vecina que se vea o, si está sola, de comparar sus colores con el estado
    conocido del cubo. Por eso se puede girar el cubo entero sin perder la solución. */
 const ar=$('ar'), actx=ar.getContext('2d',{willReadFrequently:true});
-let hitSince=0, lastCheck=0, wrongSince=0, wrongM=-1, notice='', noticeUntil=0, tracks={}, down=[];
+let lastCheck=0, notice='', noticeUntil=0, tracks={};
 const ROTMAP=[0,1,2,3].map(r=>{ const m=[]; for(let k=0;k<9;k++){ let row=k/3|0, col=k%3; for(let q=0;q<r;q++){ const nr=col, nc=2-row; row=nr; col=nc; } m.push(row*3+col); } return m; });
 const rotDir=(r,dc,dr)=>{ for(let q=0;q<r;q++){ const ndr=dc, ndc=-dr; dr=ndr; dc=ndc; } return [dc,dr]; };
 const sub3=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]], dot3=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
 const cross3=(n,p)=>[n[1]*p[2]-n[2]*p[1], n[2]*p[0]-n[0]*p[2], n[0]*p[1]-n[1]*p[0]];
 const AX=[0,1,2,3,4,5].map(f=>({col:sub3(C.facePos(f,1,2),C.facePos(f,1,1)), row:sub3(C.facePos(f,2,1),C.facePos(f,1,1))}));
-const axisOf=(d,r)=>{ const [a,b]=rotDir(r,0,1); return [a*d.ux+b*d.vx, a*d.uy+b*d.vy]; };   // hacia dónde queda "abajo" de la cara en la imagen
-const rFromDown=(d,dn)=>{ let br=0, bs=-1e9; for(let r=0;r<4;r++){ const a=axisOf(d,r), s=(a[0]*dn[0]+a[1]*dn[1])/Math.hypot(a[0],a[1]); if(s>bs){ bs=s; br=r; } } return br; };
-function geoR(a,b){ // orientación de la cara a según dónde se ve su vecina b
-  const dc=dot3(N[b.f],AX[a.f].col), dr=dot3(N[b.f],AX[a.f].row), d=a.d, w0=b.d.cx-d.cx, w1=b.d.cy-d.cy, det=d.ux*d.vy-d.uy*d.vx;
-  const al=(w0*d.vy-w1*d.vx)/det, be=(d.ux*w1-d.uy*w0)/det, li=Math.abs(al)>Math.abs(be)?Math.sign(al):0, lj=li?0:Math.sign(be);
-  for(let r=0;r<4;r++){ const q=rotDir(r,dc,dr); if(q[0]===li&&q[1]===lj) return r; }
-  return null;
-}
+
 const toColor=v=>{ const L=lab(v); let b=0, bd=1e9; refs.forEach((r,i)=>{ const d=dist(L,r); if(d<bd){bd=d;b=i;} }); return b; };
 function chevron(c,x,y,ang,a){ c.save(); c.translate(x,y); c.rotate(ang); c.globalAlpha=a; c.beginPath(); c.moveTo(-13,-17); c.lineTo(9,0); c.lineTo(-13,17); c.stroke(); c.restore(); }
 
+/* ---------- cubo unido: un solo modelo de cámara para todas las caras visibles ----------
+   Con dos o más rejillas encontradas se ajusta una cámara con perspectiva (las caras lejanas se ven más
+   pequeñas), probando qué orientación de cada cara encaja mejor. Con una sola rejilla se deducen las caras
+   vecinas por la forma del cubo. Luego cada punto se pega a la pegatina real más cercana y se reajusta.
+   Los colores no se deciden uno por uno: se compara lo que ve la cámara con los estados posibles del cubo
+   (sin giro, cada uno de los 18 giros y, si hace falta, dos giros) usando los colores de las fotos, y gana
+   el más parecido. Así una pegatina con brillo o sombra pesa poco frente a las demás. */
+let IMG=null;
+const SP=[0,1,2,3,4,5].map(g=>[...Array(9)].map((_,k)=>{ const p=C.FACELET[g*9+k].pos; return [p[0]+N[g][0]*.5,p[1]+N[g][1]*.5,p[2]+N[g][2]*.5]; }));
+const FC=[0,1,2,3,4,5].map(g=>N[g].map(v=>v*1.5));
+const add3=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
+function proj(M,x){
+  if(M.Q){ const q=M.Q, a=q[0]*x[0]+q[1]*x[1]+q[2]*x[2]+q[3], b=q[4]*x[0]+q[5]*x[1]+q[6]*x[2]+q[7], c=q[8]*x[0]+q[9]*x[1]+q[10]*x[2]+1;
+    return c>.05?[240+240*a/c,240+240*b/c]:[-1e4,-1e4]; }
+  return [M.P[0][0]*x[0]+M.P[0][1]*x[1]+M.P[0][2]*x[2]+M.t[0], M.P[1][0]*x[0]+M.P[1][1]*x[1]+M.P[1][2]*x[2]+M.t[1]];
+}
+function faceAxes(M,g){ const c=proj(M,FC[g]), a=proj(M,add3(FC[g],AX[g].col)), b=proj(M,add3(FC[g],AX[g].row)); return {c,u:[a[0]-c[0],a[1]-c[1]],v:[b[0]-c[0],b[1]-c[1]]}; }
+function visFaces(M){ return [0,1,2,3,4,5].filter(g=>{ if(g===M.base) return true; const {u,v}=faceAxes(M,g), cr=u[0]*v[1]-u[1]*v[0], L=Math.max(Math.hypot(u[0],u[1]),Math.hypot(v[0],v[1])); return L>3&&cr/(L*L)>.3; }); }
+function pixAt(x,y,R){ const d=IMG.data; x=x|0; y=y|0; let r=0,g=0,b=0,n=0;
+  for(let yy=Math.max(0,y-R);yy<=Math.min(479,y+R);yy+=2) for(let xx=Math.max(0,x-R);xx<=Math.min(479,x+R);xx+=2){ const i=(yy*480+xx)*4; r+=d[i]; g+=d[i+1]; b+=d[i+2]; n++; }
+  return n?[r/n,g/n,b/n]:[0,0,0]; }
+function solveN(A,r){ const n=r.length, M=A.map((row,i)=>row.concat(r[i]));
+  for(let i=0;i<n;i++){ let p=i; for(let k=i+1;k<n;k++) if(Math.abs(M[k][i])>Math.abs(M[p][i])) p=k; [M[i],M[p]]=[M[p],M[i]]; if(Math.abs(M[i][i])<1e-10) return null;
+    for(let k=0;k<n;k++) if(k!==i){ const f=M[k][i]/M[i][i]; for(let c=i;c<=n;c++) M[k][c]-=f*M[i][c]; } }
+  return M.map((row,i)=>row[n]/row[i]); }
+function fitCam(X,Y){ // cámara con perspectiva (11 valores) por mínimos cuadrados; imagen normalizada a [-1,1]
+  const A=[...Array(11)].map(()=>new Array(11).fill(0)), r=new Array(11).fill(0);
+  const addRow=(row,val)=>{ for(let a=0;a<11;a++){ if(!row[a]) continue; r[a]+=row[a]*val; for(let c=0;c<11;c++) A[a][c]+=row[a]*row[c]; } };
+  X.forEach((x,i)=>{ const u=(Y[i][0]-240)/240, v=(Y[i][1]-240)/240;
+    addRow([x[0],x[1],x[2],1,0,0,0,0,-u*x[0],-u*x[1],-u*x[2]],u); addRow([0,0,0,0,x[0],x[1],x[2],1,-v*x[0],-v*x[1],-v*x[2]],v); });
+  const q=solveN(A,r); if(!q) return null;
+  const M={Q:q}; let e=0; X.forEach((x,i)=>{ const p=proj(M,x); e+=Math.hypot(p[0]-Y[i][0],p[1]-Y[i][1]); }); M.err=e/X.length; return M;
+}
+function modelFrom(d,f,r,sg){ // una sola rejilla: deduce el eje que falta (aristas perpendiculares y de igual largo)
+  const [a1,b1]=rotDir(r,1,0), [a2,b2]=rotDir(r,0,1);
+  const pc=[a1*d.ux+b1*d.vx, a1*d.uy+b1*d.vy], pr=[a2*d.ux+b2*d.vx, a2*d.uy+b2*d.vy];
+  const A=pc[0]*pc[0]+pr[0]*pr[0], B=pc[1]*pc[1]+pr[1]*pr[1], Cc=pc[0]*pc[1]+pr[0]*pr[1];
+  const s2=(A+B+Math.sqrt((A-B)*(A-B)+4*Cc*Cc))/2;
+  let cx=Math.sqrt(Math.max(0,s2-A)), cy=Math.sqrt(Math.max(0,s2-B)); if(Cc>0) cy=-cy; cx*=sg; cy*=sg;
+  const col=AX[f].col, row=AX[f].row, n=N[f], P=[[0,0,0],[0,0,0]];
+  for(let i=0;i<3;i++){ P[0][i]=pc[0]*col[i]+pr[0]*row[i]+cx*n[i]; P[1][i]=pc[1]*col[i]+pr[1]*row[i]+cy*n[i]; }
+  const w=cross3(P[0],P[1]);
+  return {P, t:[d.cx-1.5*cx, d.cy-1.5*cy], base:f, ok:dot3(w,n)>0};
+}
+const gridPts=(d,f,r)=>{ const X=[],Y=[]; for(let k=0;k<9;k++){ const q=ROTMAP[r][k], i=q%3-1, j=(q/3|0)-1; X.push(SP[f][k]); Y.push(d.pts?d.pts[q]:[d.cx+i*d.ux+j*d.vx, d.cy+i*d.uy+j*d.vy]); } return {X,Y}; };
+function refine(M,blobs){ // pega cada punto a la pegatina real más cercana y reajusta con todas
+  for(let it=0;it<2;it++){
+    const X=[], Y=[], fs=new Set(); M.snap={};
+    for(const g of visFaces(M)){ const {u,v}=faceAxes(M,g), tol=.36*Math.min(Math.hypot(u[0],u[1]),Math.hypot(v[0],v[1]));
+      for(let k=0;k<9;k++){ const p=proj(M,SP[g][k]); let hit=null, hd=tol;
+        for(const b of blobs){ const dd=Math.hypot(b.x-p[0],b.y-p[1]); if(dd<hd){ hd=dd; hit=b; } }
+        if(hit){ X.push(SP[g][k]); Y.push([hit.x,hit.y]); fs.add(g); M.snap[g*9+k]=hit; } } }
+    if(fs.size<2||X.length<12) return M;
+    const M2=fitCam(X,Y); if(!M2||M2.err>6) return M;
+    M2.base=M.base; M2.snap=M.snap; M=M2;
+  }
+  return M;
+}
+function readModel(M){ const out=[];
+  for(const g of visFaces(M)){ const {u,v}=faceAxes(M,g), R=Math.max(2,Math.min(13,.24*Math.min(Math.hypot(u[0],u[1]),Math.hypot(v[0],v[1]))))|0;
+    for(let k=0;k<9;k++){ const b=M.snap&&M.snap[g*9+k], p=b?[b.x,b.y]:proj(M,SP[g][k]); if(p[0]<0||p[0]>479||p[1]<0||p[1]>479) continue;
+      const rgb=pixAt(p[0],p[1],R); out.push({i:g*9+k,rgb,L:lab(rgb)}); } }
+  return out; }
+const COSTCAP=45;
+const PRIOR=h=>h.seq.length?14+10*(h.seq.length-1):0;
+function costOf(obs,H){ let s=0; for(const o of obs){ const r=refs[H[o.i]]; s+=r?Math.min(COSTCAP,dist(o.L,r)):COSTCAP; } return s; }
+function hypotheses(two){
+  const hs=[{seq:[],st:cur}];
+  for(let m=0;m<18;m++) hs.push({seq:[m],st:C.applyMove(cur,m)});
+  if(two) for(let a=0;a<18;a++){ const s1=hs[a+1].st; for(let b=0;b<18;b++){ if((a/3|0)===(b/3|0)) continue; hs.push({seq:[a,b],st:C.applyMove(s1,b)}); } }
+  return hs;
+}
+let lastModel=null, decKey='', decSince=0, axMem={};   // axMem: hacia dónde apuntaba cada cara en la imagen hace un momento
+function buildModels(dets,blobs,faceOf){
+  const ids=dets.map(d=>{ const cL=lab(pixAt(d.cx,d.cy,6)); let f=-1, fd=1e9; refs.forEach((r,c)=>{ if(!r) return; const dd=dist(cL,r); if(dd<fd){ fd=dd; f=faceOf[c]; } }); return f; });
+  const out=[];
+  // con dos o tres rejillas de caras distintas y vecinas: cámara con perspectiva
+  const use=[]; dets.forEach((d,i)=>{ const f=ids[i]; if(f>=0&&!d.fixed&&!use.some(o=>o.f===f||o.f===(f+3)%6)) use.push({d,f}); });
+  if(use.length>=2){
+    const combos=Math.pow(4,use.length), fits=[];
+    for(let c=0;c<combos;c++){ const X=[],Y=[]; let cc=c;
+      for(const o of use){ const g=gridPts(o.d,o.f,cc%4); cc=cc/4|0; X.push(...g.X); Y.push(...g.Y); }
+      const M=fitCam(X,Y); if(M&&M.err<9){ M.base=use[0].f; fits.push(M); } }
+    fits.sort((a,b)=>a.err-b.err); for(const M of fits.slice(0,3)) out.push(refine(M,blobs));
+  }
+  // una rejilla: forma del cubo
+  dets.slice(0,3).forEach((d,i)=>{ const f=ids[i]; if(f<0) return;
+    for(let r=0;r<4;r++) for(const sg of (d.fixed?[1]:[1,-1])){ const M=modelFrom(d,f,r,sg); if(M.ok) out.push(refine(M,blobs)); } });
+  return out;
+}
 function analyse(t){
-  const exp=moves[pos], mf=exp/3|0, after=C.applyMove(cur,exp), faceOf=[]; for(let f=0;f<6;f++) faceOf[cur[f*9+4]]=f;
+  const exp=moves[pos], mf=exp/3|0, faceOf=[]; for(let f=0;f<6;f++) faceOf[cur[f*9+4]]=f;
+  IMG=actx.getImageData(0,0,480,480);
+  const kb=480/TW2, blobs=follow?findBlobs(ar,.28,3.6,.32,TW2).map(b=>({x:b.x*kb+kb/2,y:b.y*kb+kb/2})):[];
   let dets=follow?detectFaces(ar,3):[]; if(!dets.length) dets=[Object.assign({fixed:true},FIX)];
-  let vs=dets.map(d=>{ const cols=sample(actx,d), cls=cols.map(toColor); return {d,cols,cls,f:faceOf[cls[4]],r:null,geo:null}; });
-  const best4=(v,H)=>{ let b=0; for(let r=0;r<4;r++){ let n=0; for(let k=0;k<9;k++) if(v.cls[ROTMAP[r][k]]===H[v.f*9+k]) n++; if(n>b) b=n; } return b; };
-  vs=vs.filter((v,i)=>vs.findIndex(o=>o.f===v.f)===i && (v.d.fixed || Math.max(best4(v,cur),best4(v,after))>=5));
-  for(const a of vs) for(const b of vs) if(a!==b&&a.geo==null&&b.f!==(a.f+3)%6) a.geo=geoR(a,b);
-  const sc=(v,E,r)=>{ let n=0; for(let k=0;k<9;k++) if(v.cls[ROTMAP[r][k]]===E[k]) n++; return n; };
-  for(const v of vs){
-    const E=cur.slice(v.f*9,v.f*9+9), s=[0,1,2,3].map(r=>sc(v,E,r)), top=Math.max(...s), uniq=top>=8&&s.filter(x=>x===top).length===1?s.indexOf(top):null;
-    const mem=down[v.f]?rFromDown(v.d,down[v.f]):null;
-    v.r = v.geo!=null ? v.geo : (v.f===mf ? (mem!=null?mem:uniq) : (uniq!=null?uniq:mem));
-    if(v.r!=null){ const a=axisOf(v.d,v.r), l=Math.hypot(a[0],a[1]); down[v.f]=[a[0]/l,a[1]/l]; }
+  const hs1=hypotheses(false);
+  let best=null;
+  for(const M of buildModels(dets,blobs,faceOf)){
+    const obs=readModel(M); if(obs.length<9) continue;
+    let bc=1e9; for(const h of hs1){ const c=costOf(obs,h.st)+PRIOR(h); if(c<bc) bc=c; }
+    let pen=0;                                           // una cara no da un cuarto de vuelta en la imagen de un cuadro a otro
+    for(const g of visFaces(M)){ const m=axMem[g]; if(!m||t-m.t>1500) continue; const {u}=faceAxes(M,g), l=Math.hypot(u[0],u[1])||1; if((u[0]*m.d[0]+u[1]*m.d[1])/l<.64) pen+=45; }
+    const score=bc-22*obs.length+pen;                    // premia cada pegatina que encaja bien
+    if(!best||score<best.score) best={M,obs,score,bc};
   }
-  // puntaje de cada cara vista frente a un estado hipotético del cubo
-  const fs=(v,H,turned)=>{ const E=H.slice(v.f*9,v.f*9+9); if(v.r!=null) return sc(v,E,v.r); if(v.f===turned) return null; return Math.max(sc(v,E,0),sc(v,E,1),sc(v,E,2),sc(v,E,3)); };
-  const ev=(H,turned)=>{ let sum=0,min=9,n=0; for(const v of vs){ const s=fs(v,H,turned); if(s==null) continue; n++; sum+=s; if(s<min) min=s; } return {sum,min,n}; };
-  for(const v of vs){ const tr=tracks[v.f], snap=!tr||t-tr.seen>500||(tr.ux*v.d.ux+tr.uy*v.d.uy)<.7*Math.hypot(tr.ux,tr.uy)*Math.hypot(v.d.ux,v.d.uy);
-    const o=snap?Object.assign({},v.d):tr; o.tg=v.d; o.seen=t; o.cols=v.cols; o.r=v.r; o.fixed=!!v.d.fixed; o.f=v.f; tracks[v.f]=o; }
-  const eB=ev(cur,mf), eA=ev(after,mf), st=$('ar-status');
-  const known=eB.n>0&&Math.max(eB.sum,eA.sum)>=7*eB.n;
-  const canSee=vs.some(v=>{ if(v.f===mf) return v.r!=null; for(let k=0;k<9;k++) if(cur[v.f*9+k]!==after[v.f*9+k]) return true; return false; });
-  const names=vs.map(v=>COLORS[cur[v.f*9+4]].n).join(', ');
-  st.textContent = !known ? 'Muestra el cubo a la cámara. Puedes enseñar una, dos o tres caras.'
-    : canSee ? 'Veo '+(vs.length>1?'las caras ':'la cara ')+names+'. Haz el giro que marcan las flechas.'
-    : 'Veo '+(vs.length>1?'las caras ':'la cara ')+names+', pero este giro no se nota desde aquí. Gira el cubo hasta ver la cara de centro '+COLORS[cur[mf*9+4]].n+' o una vecina.';
+  if(!best){ lastModel=null; return; }
+  lastModel=best;
+  let hs=hs1; if(best.bc/best.obs.length>17) hs=hypotheses(true);
+  const scored=hs.map(h=>({h,c:costOf(best.obs,h.st)+PRIOR(h),sig:best.obs.map(o=>h.st[o.i]).join('')})).sort((a,b)=>a.c-b.c);
+  const top=scored[0], cls=scored.filter(x=>x.sig===top.sig).map(x=>x.h), other=scored.find(x=>x.sig!==top.sig);
+  const margin=other?other.c-top.c:99, avgTop=top.c/best.obs.length;
+  const vf=visFaces(best.M);
+  for(const g of vf){ const {u}=faceAxes(best.M,g), l=Math.hypot(u[0],u[1])||1; axMem[g]={d:[u[0]/l,u[1]/l],t}; }
+  for(const g of vf){
+    const {c,u,v}=faceAxes(best.M,g), cols=[...Array(9)].map((_,k)=>{ const o=best.obs.find(q=>q.i===g*9+k); return o?o.rgb:null; });
+    const tg={cx:c[0],cy:c[1],ux:u[0],uy:u[1],vx:v[0],vy:v[1]}, tr=tracks[g];
+    const snap=!tr||t-tr.seen>500||Math.hypot(tr.cx-tg.cx,tr.cy-tg.cy)>Math.hypot(u[0],u[1])*1.5;
+    const L=[]; for(let a=0;a<4;a++){ const s1=a-1.5;      // 8 líneas de la rejilla, proyectadas con perspectiva
+      L.push(proj(best.M,add3(FC[g],[AX[g].col[0]*s1-AX[g].row[0]*1.5,AX[g].col[1]*s1-AX[g].row[1]*1.5,AX[g].col[2]*s1-AX[g].row[2]*1.5])), proj(best.M,add3(FC[g],[AX[g].col[0]*s1+AX[g].row[0]*1.5,AX[g].col[1]*s1+AX[g].row[1]*1.5,AX[g].col[2]*s1+AX[g].row[2]*1.5])));
+      L.push(proj(best.M,add3(FC[g],[AX[g].row[0]*s1-AX[g].col[0]*1.5,AX[g].row[1]*s1-AX[g].col[1]*1.5,AX[g].row[2]*s1-AX[g].col[2]*1.5])), proj(best.M,add3(FC[g],[AX[g].row[0]*s1+AX[g].col[0]*1.5,AX[g].row[1]*s1+AX[g].col[1]*1.5,AX[g].row[2]*s1+AX[g].col[2]*1.5]))); }
+    const P=[...Array(9)].map((_,k)=>{ const b=best.M.snap&&best.M.snap[g*9+k]; return b?[b.x,b.y]:proj(best.M,SP[g][k]); });
+    tg.pts=L.concat(P);
+    const o=snap?Object.assign({},tg,{pts:tg.pts.map(q=>q.slice())}):tr; o.tg=tg; o.seen=t; o.cols=cols; o.r=0; o.f=g; o.fixed=!!dets[0].fixed; tracks[g]=o;
+  }
+  for(const g in tracks) if(!vf.includes(+g)) delete tracks[g];
+  const st=$('ar-status'), after=C.applyMove(cur,exp);
+  const seesTurn=vf.some(g=>g===mf||[...Array(9)].some((_,k)=>cur[g*9+k]!==after[g*9+k]));
+  st.textContent = avgTop>26 ? 'Muestra el cubo a la cámara: una, dos o tres caras.'
+    : seesTurn ? 'Haz el giro que marcan las flechas.' : 'La cara que toca girar no se ve desde aquí. Haz el giro y toca Siguiente, o inclina el cubo para verla.';
   if(t<noticeUntil) st.textContent=notice;
-  const hit=eA.n>0&&eA.min>=7&&eA.sum>=8*eA.n&&eA.sum-eB.sum>=2;
-  if(hit){ wrongSince=0; if(!hitSince) hitSince=t; else if(t-hitSince>450&&!main3d.busy) forward(); return; }
-  hitSince=0;
-  // ¿Hizo un giro distinto al indicado?
-  let cand=-1, best=0, tie=false;
-  for(let m2=0;m2<18;m2++){
-    const t2=m2/3|0; if(m2===exp||(exp%3===1&&t2===mf)) continue;       // un medio giro pasa por el cuarto de giro: no es error
-    const e2=ev(C.applyMove(cur,m2),t2), b2=ev(cur,t2), a2=ev(after,t2);
-    if(!e2.n||e2.min<8||e2.sum-b2.sum<2||e2.sum<=a2.sum) continue;
-    if(e2.sum-b2.sum>best){ best=e2.sum-b2.sum; cand=m2; tie=false; } else if(e2.sum-b2.sum===best) tie=true;
-  }
-  if(cand<0||tie){ wrongSince=0; wrongM=-1; return; }
-  if(cand!==wrongM){ wrongM=cand; wrongSince=t; return; }
-  if(t-wrongSince>1000&&!main3d.busy){ wrongSince=0; wrongM=-1; reroute(cand,t); }
+  let key='', act=null;
+  if(avgTop>26||margin<16||cls.some(h=>!h.seq.length)) key='';
+  else if(cls.some(h=>h.seq.length===1&&h.seq[0]===exp)){ key='exp'; act='exp'; }
+  else if(avgTop<24&&margin>=30&&cls.every(h=>h.st.join('')===cls[0].st.join(''))){ key=cls[0].seq.join(','); act=cls[0].seq; }   // otro giro: se exige una lectura muy clara
+  if(key!==decKey){ decKey=key; decSince=t; return; }
+  if(!act||main3d.busy) return;
+  const halfway=exp%3===1&&act!=='exp'&&act.length===1&&(act[0]/3|0)===mf&&act[0]%3!==1;   // va a mitad de un giro doble
+  if(t-decSince<(act==='exp'?450:halfway?3000:800)) return;
+  decKey='';
+  if(act==='exp') forward(); else reroute(act,t);
 }
 function drawTracks(t){
   const c=actx, m=moves[pos], mf=m/3|0, k=m%3, sign=k===2?-1:1, ph=(t/900)%1, mid=i=>X0+CELL*(i+.5);
   for(const f in tracks){ const tr=tracks[f]; if(t-tr.seen>500){ delete tracks[f]; continue; }
     for(const q of ['cx','cy','ux','uy','vx','vy']) tr[q]+=(tr.tg[q]-tr[q])*.35;
+    if(tr.pts&&tr.tg.pts){ tr.pts.forEach((q,i)=>{ q[0]+=(tr.tg.pts[i][0]-q[0])*.35; q[1]+=(tr.tg.pts[i][1]-q[1])*.35; });
+      c.save(); c.strokeStyle='#FFD23F'; c.lineCap='round';
+      for(let a=0;a<8;a++){ const e=a<2||a>5; c.lineWidth=e?4:1.5; c.globalAlpha=e?1:.6; c.beginPath(); c.moveTo(...tr.pts[a*2]); c.lineTo(...tr.pts[a*2+1]); c.stroke(); }
+      c.globalAlpha=1; if(tr.cols) tr.cols.forEach((v,i)=>{ if(!v) return; const q=tr.pts[16+i], R=Math.max(4,Math.min(13,Math.hypot(tr.ux,tr.uy)*.16)); c.beginPath(); c.arc(q[0],q[1],R,0,7); c.fillStyle='rgb('+v.map(Math.round)+')'; c.fill(); c.lineWidth=2.5; c.strokeStyle='#fff'; c.stroke(); });
+      c.restore(); }
     c.save(); c.transform(tr.ux/CELL,tr.uy/CELL,tr.vx/CELL,tr.vy/CELL,tr.cx-240*(tr.ux+tr.vx)/CELL,tr.cy-240*(tr.uy+tr.vy)/CELL);
-    c.lineWidth=4; c.strokeStyle=tr.fixed?'#fff':'#FFD23F'; c.strokeRect(X0,X0,SZ,SZ);
+    if(!tr.pts){ c.lineWidth=4; c.strokeStyle=tr.fixed?'#fff':'#FFD23F'; c.strokeRect(X0,X0,SZ,SZ);
     c.lineWidth=1.5; c.globalAlpha=.6; c.beginPath(); for(let i=1;i<3;i++){ c.moveTo(X0+CELL*i,X0); c.lineTo(X0+CELL*i,X0+SZ); c.moveTo(X0,X0+CELL*i); c.lineTo(X0+SZ,X0+CELL*i); } c.stroke(); c.globalAlpha=1;
-    if(tr.cols) tr.cols.forEach((v,i)=>{ c.beginPath(); c.arc(mid(i%3),mid(i/3|0),13,0,7); c.fillStyle='rgb('+v.map(Math.round)+')'; c.fill(); c.lineWidth=3; c.strokeStyle='#fff'; c.stroke(); });
+    if(tr.cols) tr.cols.forEach((v,i)=>{ if(!v) return; c.beginPath(); c.arc(mid(i%3),mid(i/3|0),13,0,7); c.fillStyle='rgb('+v.map(Math.round)+')'; c.fill(); c.lineWidth=3; c.strokeStyle='#fff'; c.stroke(); }); }
     c.strokeStyle='#FFD23F'; c.fillStyle='rgba(255,210,63,.22)'; c.lineWidth=7; c.lineCap='round'; c.lineJoin='round'; c.shadowColor='#FFD23F'; c.shadowBlur=14;
     const g=+f;
     if(g===mf){ // flecha curva: horario en pantalla es horario en la cara
@@ -977,11 +1090,12 @@ function drawTracks(t){
   c.save(); c.fillStyle='#FFD23F'; c.font='700 34px Rubik, sans-serif'; c.textBaseline='top'; c.shadowColor='#000'; c.shadowBlur=6;
   c.fillText(C.moveName(m)+'  ·  centro '+COLORS[cur[mf*9+4]].n,14,10); c.restore();
 }
-function reroute(m2, now){ // el usuario hizo m2: se calcula una solución nueva desde el estado real
-  const state=C.applyMove(cur,m2), of={}; for(let f=0;f<6;f++) of[state[f*9+4]]=f;
+function reroute(seq, now){ // el usuario hizo otros giros: solución nueva desde el estado real
+  let state=cur; for(const m of seq) state=C.applyMove(state,m);
+  const of={}; for(let f=0;f<6;f++) of[state[f*9+4]]=f;
   const r=C.solve(state.map(c=>of[c]),500); if(!r) return;
   stickers=state; moves=r; buildSolve(true);
-  notice='Detecté un giro distinto ('+C.moveName(m2)+'). Calculé una solución nueva desde donde estás.'; noticeUntil=now+7000;
+  notice='Detecté '+seq.map(C.moveName).join(' ')+'. Ajusté la solución desde ahí.'; noticeUntil=now+6000;
   $('ar-status').textContent=notice;
 }
 function frameLoop(t){
@@ -1001,7 +1115,7 @@ function frameLoop(t){
       if(t-lastCheck>110){ lastCheck=t; analyse(t); }
       drawTracks(t);
       // holograma: sólo cuando se ve únicamente la cara frontal; el cubo virtual repite el giro pendiente encima
-      const act=Object.values(tracks); if(act.length===1&&act[0].f===2&&act[0].r!=null) g1=act[0];
+      const act=Object.values(tracks); if(act.length===1&&act[0].f===2&&act[0].r!=null&&!act[0].fixed) g1=act[0];
       if(g1&&!reduced&&(ghostPos!==pos||t-ghostAt>2300)){ ghostPos=pos; ghostAt=t; ghost.build(cur); ghost.turn(moves[pos],false,false,1100,450); }
     }
     $('ghost').hidden=reduced||!g1;
