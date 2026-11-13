@@ -57,6 +57,8 @@ section.on{display:flex}
 .mini i{width:9px;height:9px;border-radius:2px;background:var(--line)}
 .stage{position:relative;aspect-ratio:1;border-radius:16px;overflow:hidden;background:#0d110b;touch-action:pan-y;user-select:none;width:84%;align-self:center}
 .stage.has{touch-action:none}
+.stage.big{width:calc(100% + 32px);margin:0 -16px;border-radius:0}
+@media (prefers-reduced-motion:no-preference){.stage{transition:width .35s ease,margin .35s ease}}
 .stage canvas{width:100%;height:100%;display:block}
 .frame{position:absolute;inset:12%;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);border:3px solid #fff;border-radius:10px;box-shadow:0 0 0 999px rgba(13,17,11,.5);pointer-events:none}
 .frame div{border:1px solid rgba(243,252,240,.55);position:relative}
@@ -99,7 +101,7 @@ input[type=range]{width:100%;accent-color:var(--yellow)}
 .cube{position:relative;width:0;height:0}
 .cubie{position:absolute;width:54px;height:54px;margin:-27px}
 .cubie b{position:absolute;inset:0;border-radius:7px;box-shadow:inset 0 0 0 3px #0b0e09;backface-visibility:hidden}
-.ghost{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;perspective:700px;pointer-events:none;opacity:.62;filter:drop-shadow(0 0 10px rgba(255,210,63,.8))}
+.ghost{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;perspective:700px;pointer-events:none;opacity:.3;filter:drop-shadow(0 0 10px rgba(255,210,63,.8))}
 .top{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
 .timer{font:700 20px/1 var(--font);font-variant-numeric:tabular-nums}
 .now{display:flex;align-items:center;gap:14px;min-height:72px}
@@ -712,6 +714,9 @@ function renderStep(){
   $('final-snap').hidden=!live; $('final-btn').hidden=live;
   $('ar-stage').hidden=!live; $('ar-status').hidden=!live||solved;
   hitSince=0; ghostPos=-1;
+  const st=$('ar-stage'), big=pos>0&&!solved, grew=big&&!st.classList.contains('big');
+  st.classList.toggle('big',big); // tras el primer giro, la cámara ocupa todo el ancho
+  if(grew&&live) setTimeout(()=>st.scrollIntoView({block:'start',behavior:reduced?'auto':'smooth'}),380);
 }
 function goTo(p){ main3d.build(stickers); cur=stickers.slice(); for(let i=0;i<p;i++){ main3d.turn(moves[i],false,true); cur=C.applyMove(cur,moves[i]); } pos=p; renderStep(); }
 function forward(){ if(pos>=moves.length) return; main3d.turn(moves[pos]); cur=C.applyMove(cur,moves[pos]); pos++; renderStep(); }
@@ -746,14 +751,17 @@ function arrows(m,t){
   const f=m/3|0, k=m%3, c=actx, ph=(t/900)%1, sign=k===2?-1:1;
   c.save(); c.strokeStyle='#FFD23F'; c.fillStyle='rgba(255,210,63,.2)'; c.lineWidth=7; c.lineCap='round'; c.lineJoin='round'; c.shadowColor='#FFD23F'; c.shadowBlur=14;
   const line=(x1,y1,x2,y2)=>{ const ang=Math.atan2(y2-y1,x2-x1); for(let i=0;i<4;i++){ const u=(ph+i/4)%1; chevron(c,x1+(x2-x1)*u,y1+(y2-y1)*u,ang,Math.sin(Math.PI*u)); } };
-  const arc=(r,dir)=>{ for(let i=0;i<8;i++){ const u=(ph/2+i/8)%1, a=dir*u*Math.PI*2-Math.PI/2; chevron(c,240+r*Math.cos(a),240+r*Math.sin(a),a+dir*Math.PI/2,.9); } };
+  // una sola flecha curva que crece en el sentido del giro (visto desde el frente), para que no haya dudas
+  const arc=(r,dir)=>{ const p2=(t/1700)%1, g=Math.min(1,p2/.75), e=g*g*(3-2*g), a0=-Math.PI/2, a1=a0+dir*(.08+.67*e)*Math.PI*2;
+    c.globalAlpha=p2>.85?(1-p2)/.15:1; c.beginPath(); c.arc(240,240,r,a0,a1,dir<0); c.stroke();
+    chevron(c,240+r*Math.cos(a1),240+r*Math.sin(a1),a1+dir*Math.PI/2,c.globalAlpha); c.globalAlpha=1; };
   const mid=i=>X0+CELL*(i+.5), a=X0+18, b=X0+SZ-18;
   if(f===0||f===3){ const row=f===0?0:2, d=(f===0?-1:1)*sign; c.shadowBlur=0; c.fillRect(X0,X0+CELL*row,SZ,CELL); c.shadowBlur=14; d<0?line(b,mid(row),a,mid(row)):line(a,mid(row),b,mid(row)); }
   else if(f===1||f===4){ const col=f===1?2:0, d=(f===1?-1:1)*sign; c.shadowBlur=0; c.fillRect(X0+CELL*col,X0,CELL,SZ); c.shadowBlur=14; d<0?line(mid(col),b,mid(col),a):line(mid(col),a,mid(col),b); }
   else if(f===2) arc(118,sign);
-  else { c.setLineDash([2,14]); c.beginPath(); c.arc(240,240,214,0,Math.PI*2); c.globalAlpha=.5; c.stroke(); c.setLineDash([]); c.globalAlpha=1; arc(214,-sign); }
+  else arc(214,-sign);
   c.shadowBlur=0; c.fillStyle='#FFD23F'; c.font='700 34px Rubik, sans-serif'; c.textBaseline='top';
-  c.fillText(C.moveName(m)+(f===5?' · atrás':''),14,10);
+  c.fillText(C.moveName(m)+(f===5?' · cara de atrás':''),14,10);
   c.restore();
 }
 function detect(cols, now){
@@ -762,7 +770,7 @@ function detect(cols, now){
   let ch=0,chA=0,chB=0,un=0,unOk=0;
   for(let k=0;k<9;k++){ if(after[k]!==before[k]){ ch++; if(cls[k]===after[k]) chA++; else if(cls[k]===before[k]) chB++; } else { un++; if(cls[k]===before[k]) unOk++; } }
   const st=$('ar-status');
-  if(!ch){ st.textContent='Este giro no se ve desde el frente. Hazlo y toca Siguiente.'; hitSince=0; return; }
+  if(!ch){ st.textContent='Este giro es en la cara de atrás. Gírala hacia donde apunta la flecha, tal como la ves desde el frente, y toca Siguiente.'; hitSince=0; return; }
   st.textContent = unOk+chB+chA>=7 ? 'Cubo en posición. Repite el giro que hace el cubo transparente.' : 'Pon la cara de centro '+COLORS[stickers[22]].n+' dentro de la rejilla, con el centro '+COLORS[stickers[4]].n+' arriba.';
   const hit = chA>=Math.ceil(ch*2/3) && chA>chB && unOk>=Math.ceil(un*2/3);
   if(!hit){ hitSince=0; return; }
