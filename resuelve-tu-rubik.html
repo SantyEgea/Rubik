@@ -65,9 +65,12 @@ section.on{display:flex}
 .frame span{position:absolute;left:50%;top:50%;width:26%;height:26%;margin:-13% 0 0 -13%;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px #000;display:none}
 .stage.on .frame span{display:block}
 .hint{position:absolute;border-radius:6px;border:2px solid #fff;box-shadow:0 0 0 1px #000;pointer-events:none;display:none}
-.hint.top,.hint.bottom{left:38%;width:24%;height:5%}
-.hint.left,.hint.right{top:38%;height:24%;width:5%}
-.hint.top{top:3.5%}.hint.bottom{bottom:3.5%}.hint.left{left:3.5%}.hint.right{right:3.5%}
+.hint.top,.hint.bottom{left:38%;width:24%;height:6.5%}
+.hint.left,.hint.right{top:38%;height:24%;width:6.5%}
+.hint.top{top:-11%}.hint.bottom{bottom:-11%}.hint.left{left:-11%}.hint.right{right:-11%}
+.frame.lock{border-color:var(--yellow)}
+.follow{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.follow input{width:18px;height:18px;accent-color:var(--indigo)}
 .autobar{position:absolute;left:0;bottom:0;height:8px;width:0;background:var(--yellow);pointer-events:none}
 .empty{position:absolute;inset:12%;display:flex;align-items:center;justify-content:center;text-align:center;padding:14%;color:rgba(243,252,240,.75);font-size:14px;pointer-events:none}
 .stage.on .empty{display:none}
@@ -142,7 +145,6 @@ details dd{margin:0}
     <div class="stage" id="stage">
       <canvas id="view" width="480" height="480"></canvas>
       <div class="frame" id="frame"></div>
-      <i class="hint top"></i><i class="hint bottom"></i><i class="hint left"></i><i class="hint right"></i>
       <div class="empty">Encaja la cara del cubo dentro de este marco</div>
       <i class="autobar" id="autobar"></i>
     </div>
@@ -156,6 +158,7 @@ details dd{margin:0}
       <span class="btn filebtn" id="reshot-btn" hidden><span>Repetir foto</span><input id="reshot" type="file" accept="image/*" capture="environment" aria-label="Repetir foto"></span>
     </div>
     <button id="redo" type="button" hidden>Repetir foto anterior</button>
+    <label class="follow" id="follow-row" hidden><input type="checkbox" id="follow-scan" class="follow-box" checked> Seguir el cubo aunque no esté centrado</label>
   </section>
 
   <!-- 2. Revisar -->
@@ -187,6 +190,7 @@ details dd{margin:0}
       <div class="ghost" id="ghost" hidden><div class="cube" id="ghost-cube"></div></div>
     </div>
     <p class="small muted" id="ar-status" hidden></p>
+    <label class="follow" id="follow-row2" hidden><input type="checkbox" id="follow-solve" class="follow-box" checked> Seguir el cubo aunque no esté centrado</label>
     <div class="card" id="move-card">
       <div class="top"><span class="step" id="count"></span><span class="timer" id="timer">00:00</span></div>
       <div class="now"><span class="mv" id="mv"></span><p id="mv-text"></p></div>
@@ -489,16 +493,84 @@ async function startCam(){
 }
 const camSrc = () => live && video.videoWidth ? {s:video,w:video.videoWidth,h:video.videoHeight} : null;
 function cover(c, src, size, z, dx, dy){ const k=Math.max(size/src.w,size/src.h)*z, w=src.w*k, h=src.h*k; c.drawImage(src.s, size/2-w/2+dx, size/2-h/2+dy, w, h); }
-function sample(c){ // color medio del centro de cada casilla del marco (lienzo de 480)
-  const cell=480*0.76/3, x0=480*0.12, R=16, out=[]; out.sd=[];
+const X0=480*0.12, SZ=480*0.76, CELL=SZ/3;
+const FIX={cx:240,cy:240,ux:CELL,uy:0,vx:0,vy:CELL};          // rejilla fija del centro
+const mkTrack=()=>Object.assign({seen:-1e9,on:false,tg:FIX},FIX);
+function sample(c, tr){ // color medio del centro de cada casilla de la rejilla (lienzo de 480)
+  const R=Math.max(5,Math.min(16,Math.hypot(tr.ux,tr.uy)*0.14))|0, out=[]; out.sd=[];
   for (let k=0;k<9;k++){
-    const d=c.getImageData((x0+cell*(k%3+.5)-R)|0,(x0+cell*((k/3|0)+.5)-R)|0,R*2,R*2).data; let r=0,g=0,b=0,q=0;
+    const i=k%3-1, j=(k/3|0)-1, px=Math.max(0,Math.min(480-R*2,(tr.cx+i*tr.ux+j*tr.vx-R)|0)), py=Math.max(0,Math.min(480-R*2,(tr.cy+i*tr.uy+j*tr.vy-R)|0));
+    const d=c.getImageData(px,py,R*2,R*2).data; let r=0,g=0,b=0,q=0;
     for (let i=0;i<d.length;i+=4){ r+=d[i]; g+=d[i+1]; b+=d[i+2]; q+=d[i]*d[i]+d[i+1]*d[i+1]+d[i+2]*d[i+2]; }
     const n=d.length/4; r/=n; g/=n; b/=n; out.push([r,g,b]);
     out.sd.push(Math.sqrt(Math.max(0,q/n-r*r-g*g-b*b)/3)); // qué tan parejo es el color dentro de la casilla
   }
   return out;
 }
+/* ---------- seguimiento: encuentra la cara del cubo en la imagen ----------
+   1) reduce la imagen a 120 px; 2) agrupa píxeles vecinos de color vivo y parejo (pegatinas);
+   3) busca 7 o más grupos cuadrados que formen una retícula de 3×3; 4) ajusta centro y ejes por mínimos cuadrados. */
+const TW=120, tcan=document.createElement('canvas'); tcan.width=tcan.height=TW;
+const tctx=tcan.getContext('2d',{willReadFrequently:true});
+function solve3(M,r){ // sistema 3×3 por eliminación
+  const A=M.map((row,i)=>row.concat(r[i]));
+  for(let i=0;i<3;i++){ let p=i; for(let k=i+1;k<3;k++) if(Math.abs(A[k][i])>Math.abs(A[p][i])) p=k; [A[i],A[p]]=[A[p],A[i]]; if(Math.abs(A[i][i])<1e-9) return null;
+    for(let k=0;k<3;k++) if(k!==i){ const f=A[k][i]/A[i][i]; for(let c=i;c<4;c++) A[k][c]-=f*A[i][c]; } }
+  return [A[0][3]/A[0][0],A[1][3]/A[1][1],A[2][3]/A[2][2]];
+}
+function detectFace(src){
+  tctx.drawImage(src,0,0,TW,TW);
+  const d=tctx.getImageData(0,0,TW,TW).data, NP=TW*TW, ok=new Uint8Array(NP), seen=new Uint8Array(NP), stack=new Int32Array(NP);
+  const diff=(p,q)=>Math.abs(d[p]-d[q])+Math.abs(d[p+1]-d[q+1])+Math.abs(d[p+2]-d[q+2]);
+  for(let y=0;y<TW;y++) for(let x=0;x<TW;x++){
+    const i=y*TW+x, p=i*4, mx=Math.max(d[p],d[p+1],d[p+2]), mn=Math.min(d[p],d[p+1],d[p+2]);
+    if(mx<55 || !(mx>135 || (mx-mn)/mx>.28)) continue;                    // oscuro (plástico) o apagado (fondo)
+    if(x<TW-1 && diff(p,p+4)>70) continue; if(y<TW-1 && diff(p,p+TW*4)>70) continue;   // borde
+    ok[i]=1;
+  }
+  const cand=[];
+  for(let s0=0;s0<NP;s0++){
+    if(!ok[s0]||seen[s0]) continue;
+    let top=0, area=0, sx=0, sy=0, x0=TW, x1=0, y0=TW, y1=0; stack[top++]=s0; seen[s0]=1;
+    while(top){ const i=stack[--top], x=i%TW, y=(i/TW)|0; area++; sx+=x; sy+=y; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y;
+      if(x>0){ const n=i-1; if(ok[n]&&!seen[n]&&diff(i*4,n*4)<40){ seen[n]=1; stack[top++]=n; } }
+      if(x<TW-1){ const n=i+1; if(ok[n]&&!seen[n]&&diff(i*4,n*4)<40){ seen[n]=1; stack[top++]=n; } }
+      if(y>0){ const n=i-TW; if(ok[n]&&!seen[n]&&diff(i*4,n*4)<40){ seen[n]=1; stack[top++]=n; } }
+      if(y<TW-1){ const n=i+TW; if(ok[n]&&!seen[n]&&diff(i*4,n*4)<40){ seen[n]=1; stack[top++]=n; } } }
+    const w=x1-x0+1, h=y1-y0+1;
+    if(area<30||area>1100||w/h<.55||w/h>1.8||area/(w*h)<.5) continue;
+    cand.push({x:sx/area,y:sy/area,a:area,side:Math.sqrt(area)});
+  }
+  if(cand.length<7||cand.length>90) return null;
+  let best=null;
+  for(const b of cand) for(const n of cand){
+    if(n===b) continue; const ux=n.x-b.x, uy=n.y-b.y, L=Math.hypot(ux,uy);
+    if(L<b.side*.95||L>b.side*1.9||n.a/b.a<.45||n.a/b.a>2.2) continue;
+    const m=[{i:0,j:0,b:b}], used=new Set([b]);
+    for(let j=-1;j<=1;j++) for(let i=-1;i<=1;i++){ if(!i&&!j) continue;
+      const px=b.x+i*ux-j*uy, py=b.y+i*uy+j*ux; let hit=null, hd=L*.32;
+      for(const c of cand){ if(used.has(c)||c.a/b.a<.45||c.a/b.a>2.2) continue; const dd=Math.hypot(c.x-px,c.y-py); if(dd<hd){ hd=dd; hit=c; } }
+      if(hit){ used.add(hit); m.push({i,j,b:hit}); } }
+    if(!best||m.length>best.length) best=m;
+  }
+  if(!best||best.length<7) return null;
+  const M=[[0,0,0],[0,0,0],[0,0,0]], rx=[0,0,0], ry=[0,0,0];
+  for(const q of best){ const v=[1,q.i,q.j]; for(let a=0;a<3;a++){ rx[a]+=v[a]*q.b.x; ry[a]+=v[a]*q.b.y; for(let c=0;c<3;c++) M[a][c]+=v[a]*v[c]; } }
+  const X=solve3(M,rx), Y=solve3(M,ry); if(!X||!Y) return null;
+  const k=480/TW, axes=[[X[1],Y[1]],[X[2],Y[2]],[-X[1],-Y[1]],[-X[2],-Y[2]]];
+  const ui=axes.reduce((bi,a,i)=>a[0]>axes[bi][0]?i:bi,0), u=axes[ui], v1=axes[(ui+1)%4], v=v1[1]>0?v1:axes[(ui+3)%4];
+  const lu=Math.hypot(u[0],u[1])*k, lv=Math.hypot(v[0],v[1])*k, cos=(u[0]*v[0]+u[1]*v[1])*k*k/(lu*lv);
+  if(lu<18||lu>150||lu/lv<.6||lu/lv>1.6||Math.abs(cos)>.5) return null;
+  const t={cx:(X[0]+.5)*k,cy:(Y[0]+.5)*k,ux:u[0]*k,uy:u[1]*k,vx:v[0]*k,vy:v[1]*k,n:best.length};
+  for(const [i,j] of [[-1.4,-1.4],[1.4,-1.4],[-1.4,1.4],[1.4,1.4]]){ const x=t.cx+i*t.ux+j*t.vx, y=t.cy+i*t.uy+j*t.vy; if(x<0||x>480||y<0||y>480) return null; }
+  return t;
+}
+let follow=true;
+function stepTrack(tr, t, det){ // det: resultado nuevo, null si no se encontró, undefined si no tocaba buscar
+  if(det){ tr.tg=det; tr.seen=t; } if(t-tr.seen>600) tr.tg=FIX; tr.on=tr.tg!==FIX;
+  for(const k of ['cx','cy','ux','uy','vx','vy']) tr[k]+=(tr.tg[k]-tr[k])*.35;
+}
+const cssTrack=(tr,stageEl)=>{ const k=stageEl.clientWidth/480; return 'matrix('+[tr.ux/CELL,tr.uy/CELL,tr.vx/CELL,tr.vy/CELL,(tr.cx-240)*k,(tr.cy-240)*k].map(v=>+v.toFixed(4))+')'; };
 function grid(el){ for (let i=0;i<9;i++){ const d=document.createElement('div'); d.appendChild(document.createElement('span')); el.appendChild(d); } }
 const dots=(el,cols)=>cols.forEach((v,k)=>el.children[k].firstChild.style.background='rgb('+v.map(Math.round)+')');
 
@@ -506,6 +578,8 @@ const dots=(el,cols)=>cols.forEach((v,k)=>el.children[k].firstChild.style.backgr
 const view = $('view'), ctx = view.getContext('2d', {willReadFrequently:true});
 let img = null, zoom = 1, ox = 0, oy = 0, liveCols = null;
 const frame = $('frame'); grid(frame); grid($('ar-frame'));
+for(const side of ['top','bottom','left','right']){ const h=document.createElement('i'); h.className='hint '+side; frame.appendChild(h); }
+const trScan=mkTrack(), trAR=mkTrack(); let lastTrack=0;
 const facesEl = $('faces');
 SCAN.forEach((f,i)=>{ const b=document.createElement('button'); b.type='button';
   b.innerHTML='<span class="mini">'+'<i></i>'.repeat(9)+'</span>'+FACE_ES[f]; b.onclick=()=>{step=i; img=null; rgbs.fill(null,f*9,f*9+9); renderScan();}; facesEl.appendChild(b); });
@@ -515,7 +589,7 @@ function draw(){
   const src = img ? {s:img,w:img.width,h:img.height} : camSrc();
   if (!src) { liveCols=null; return; }
   cover(ctx, src, 480, zoom, img?ox:0, img?oy:0);
-  liveCols = sample(ctx); dots(frame, liveCols);
+  liveCols = sample(ctx, img?FIX:trScan); dots(frame, liveCols);
 }
 function renderScan(){
   const f = SCAN[step];
@@ -529,8 +603,8 @@ function renderScan(){
   }
   $('stage').classList.toggle('has', !!img); $('stage').classList.toggle('on', !!img||live);
   $('zoom-row').classList.toggle('on', !!img||live); $('scan-tip').hidden=!img&&!live;
-  $('scan-tip').textContent = img ? 'Arrastra la foto y acércala hasta que las 9 casillas queden dentro de la cuadrícula.' : 'Mantén el cubo quieto dentro de la cuadrícula: la foto se toma sola cuando se reconocen los 9 colores.';
-  $('redo').hidden = lastSaved<0 || !!img;
+  $('scan-tip').textContent = img ? 'Arrastra la foto y acércala hasta que las 9 casillas queden dentro de la cuadrícula.' : 'Muestra la cara del cubo y mantenlo quieto: la cuadrícula lo sigue (se pone amarilla) y la foto se toma sola al reconocer los 9 colores.';
+  $('redo').hidden = lastSaved<0 || !!img; $('follow-row').hidden=!live;
   $('snap').hidden=!!img||!live; $('shot-btn').hidden=!!img||live;
   $('use').hidden=!img; $('retry').hidden=!img||!live; $('reshot-btn').hidden=!img||live;
   draw();
@@ -739,7 +813,7 @@ function renderStep(){
   $('timer').textContent=fmt(elapsed());
   $('done').hidden=!solved; $('lost').hidden=solved; $('done-time').textContent='Resuelto en '+fmt(elapsed());
   $('final-snap').hidden=!live; $('final-btn').hidden=live;
-  $('ar-stage').hidden=!live; $('ar-status').hidden=!live||solved;
+  $('ar-stage').hidden=!live; $('ar-status').hidden=!live||solved; $('follow-row2').hidden=!live||solved;
   hitSince=0; ghostPos=-1;
   const st=$('ar-stage'), big=pos>0&&!solved, grew=big&&!st.classList.contains('big');
   st.classList.toggle('big',big); // tras el primer giro, la cámara ocupa todo el ancho
@@ -772,11 +846,11 @@ orient();
 /* ---------- guía sobre la cámara: flechas encima del cubo y detección del giro ---------- */
 const ar=$('ar'), actx=ar.getContext('2d',{willReadFrequently:true});
 let hitSince=0, lastCheck=0, wrongSince=0, wrongM=-1, notice='', noticeUntil=0;
-const X0=480*0.12, SZ=480*0.76, CELL=SZ/3;
 function chevron(c,x,y,ang,a){ c.save(); c.translate(x,y); c.rotate(ang); c.globalAlpha=a; c.beginPath(); c.moveTo(-13,-17); c.lineTo(9,0); c.lineTo(-13,17); c.stroke(); c.restore(); }
 function arrows(m,t){
   const f=m/3|0, k=m%3, c=actx, ph=(t/900)%1, sign=k===2?-1:1;
-  c.save(); c.strokeStyle='#FFD23F'; c.fillStyle='rgba(255,210,63,.2)'; c.lineWidth=7; c.lineCap='round'; c.lineJoin='round'; c.shadowColor='#FFD23F'; c.shadowBlur=14;
+  c.save(); c.transform(trAR.ux/CELL,trAR.uy/CELL,trAR.vx/CELL,trAR.vy/CELL,trAR.cx-240*(trAR.ux+trAR.vx)/CELL,trAR.cy-240*(trAR.uy+trAR.vy)/CELL);
+  c.strokeStyle='#FFD23F'; c.fillStyle='rgba(255,210,63,.2)'; c.lineWidth=7; c.lineCap='round'; c.lineJoin='round'; c.shadowColor='#FFD23F'; c.shadowBlur=14;
   const line=(x1,y1,x2,y2)=>{ const ang=Math.atan2(y2-y1,x2-x1); for(let i=0;i<4;i++){ const u=(ph+i/4)%1; chevron(c,x1+(x2-x1)*u,y1+(y2-y1)*u,ang,Math.sin(Math.PI*u)); } };
   // una sola flecha curva que crece en el sentido del giro (visto desde el frente), para que no haya dudas
   const arc=(r,dir)=>{ const p2=(t/1700)%1, g=Math.min(1,p2/.75), e=g*g*(3-2*g), a0=-Math.PI/2, a1=a0+dir*(.08+.67*e)*Math.PI*2;
@@ -787,7 +861,7 @@ function arrows(m,t){
   else if(f===1||f===4){ const col=f===1?2:0, d=(f===1?-1:1)*sign; c.shadowBlur=0; c.fillRect(X0+CELL*col,X0,CELL,SZ); c.shadowBlur=14; d<0?line(mid(col),b,mid(col),a):line(mid(col),a,mid(col),b); }
   else if(f===2) arc(118,sign);
   else arc(214,-sign);
-  c.shadowBlur=0; c.fillStyle='#FFD23F'; c.font='700 34px Rubik, sans-serif'; c.textBaseline='top';
+  c.restore(); c.save(); c.fillStyle='#FFD23F'; c.font='700 34px Rubik, sans-serif'; c.textBaseline='top';
   c.fillText(C.moveName(m)+(f===5?' · cara de atrás':''),14,10);
   c.restore();
 }
@@ -798,7 +872,7 @@ function detect(cols, now){
   for(let k=0;k<9;k++){ if(after[k]!==before[k]){ ch++; if(cls[k]===after[k]) chA++; else if(cls[k]===before[k]) chB++; } else { un++; if(cls[k]===before[k]) unOk++; } }
   const st=$('ar-status');
   if(!ch){ st.textContent='Este giro es en la cara de atrás. Gírala hacia donde apunta la flecha, tal como la ves desde el frente, y toca Siguiente.'; hitSince=0; return; }
-  st.textContent = unOk+chB+chA>=7 ? 'Cubo en posición. Repite el giro que hace el cubo transparente.' : 'Pon la cara de centro '+COLORS[stickers[22]].n+' dentro de la rejilla, con el centro '+COLORS[stickers[4]].n+' arriba.';
+  st.textContent = unOk+chB+chA>=7 ? 'Cubo en posición. Repite el giro que hace el cubo transparente.' : 'Muestra a la cámara la cara de centro '+COLORS[stickers[22]].n+', con el centro '+COLORS[stickers[4]].n+' arriba.';
   if(now<noticeUntil) st.textContent=notice;
   const hit = chA>=ch-(ch>=6?2:ch>=4?1:0) && chA>chB && unOk>=Math.ceil(un*2/3); // con pocas casillas cambiadas se exigen todas
   if(hit){ wrongSince=0; if(!hitSince) hitSince=now; else if(now-hitSince>450 && !main3d.busy) forward(); return; }
@@ -826,13 +900,20 @@ function reroute(m2, now){ // el usuario hizo m2: se calcula una solución nueva
 }
 function frameLoop(t){
   requestAnimationFrame(frameLoop);
-  if(current==='scan' && live && !img){ draw(); if(t-lastCheck>120){ lastCheck=t; autoCheck(t); } }
+  const look=follow && t-lastTrack>90; if(look) lastTrack=t;
+  if(current==='scan'){
+    if(live && !img){ draw(); stepTrack(trScan,t,look?detectFace(view):undefined); if(t-lastCheck>120){ lastCheck=t; autoCheck(t); } }
+    else stepTrack(trScan,t+1e6,null);
+    frame.style.transform=cssTrack(trScan,stage); frame.classList.toggle('lock',trScan.on);
+  }
   if(current==='solve' && moves){
     if(!tEnd) $('timer').textContent=fmt(elapsed());
     const src=camSrc(); if(!src) return;
     actx.fillStyle='#0d110b'; actx.fillRect(0,0,480,480); cover(actx,src,480,zoom,0,0);
+    stepTrack(trAR,t,look?detectFace(ar):undefined);
+    const tf=cssTrack(trAR,$('ar-stage')); $('ar-frame').style.transform=tf; $('ghost').style.transform=tf; $('ar-frame').classList.toggle('lock',trAR.on);
     if(pos<moves.length){
-      if(t-lastCheck>140){ lastCheck=t; const cols=sample(actx); dots($('ar-frame'),cols); detect(cols,t); }
+      if(t-lastCheck>140){ lastCheck=t; const cols=sample(actx,trAR); dots($('ar-frame'),cols); detect(cols,t); }
       arrows(moves[pos],t);
       // holograma: el cubo virtual repite el giro pendiente encima del cubo real
       if(!reduced && (ghostPos!==pos || t-ghostAt>2300)){ ghostPos=pos; ghostAt=t; ghost.build(cur); ghost.turn(moves[pos],false,false,1100,450); }
@@ -861,6 +942,7 @@ $('home').onclick=()=>{
   $('nav-review').disabled=true; $('nav-solve').disabled=true; renderScan(); show('scan');
 };
 
+document.querySelectorAll('.follow-box').forEach(b=>b.onchange=()=>{ follow=b.checked; document.querySelectorAll('.follow-box').forEach(o=>o.checked=follow); if(!follow){ trScan.seen=trAR.seen=-1e9; } });
 renderScan(); show('scan');
 if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) startCam();
 setTimeout(()=>C.init(), 400);
