@@ -180,13 +180,14 @@ details dd{margin:0}
   <!-- 3. Solución -->
   <section id="solve">
     <div class="card guide hold">
-      <span class="step">Sostén el cubo así todo el tiempo</span>
+      <span class="step">Posición de referencia</span>
       <h2 id="hold-main"></h2>
       <ul id="hold-rest"></ul>
+      <p class="small muted" id="hold-note"></p>
     </div>
     <div class="stage on" id="ar-stage" hidden>
       <canvas id="ar" width="480" height="480"></canvas>
-      <div class="frame" id="ar-frame"></div>
+      <div class="frame" id="ar-frame" hidden></div>
       <div class="ghost" id="ghost" hidden><div class="cube" id="ghost-cube"></div></div>
     </div>
     <p class="small muted" id="ar-status" hidden></p>
@@ -510,17 +511,17 @@ function sample(c, tr){ // color medio del centro de cada casilla de la rejilla 
 /* ---------- seguimiento: encuentra la cara del cubo en la imagen ----------
    1) reduce la imagen a 120 px; 2) agrupa píxeles vecinos de color vivo y parejo (pegatinas);
    3) busca 7 o más grupos cuadrados que formen una retícula de 3×3; 4) ajusta centro y ejes por mínimos cuadrados. */
-const TW=120, tcan=document.createElement('canvas'); tcan.width=tcan.height=TW;
-const tctx=tcan.getContext('2d',{willReadFrequently:true});
+const TW=120, TW0=120, TW2=168, tcan=document.createElement('canvas'), tcan2=document.createElement('canvas'); tcan.width=tcan.height=TW; tcan2.width=tcan2.height=TW2;
+const tctx=tcan.getContext('2d',{willReadFrequently:true}), tctx2=tcan2.getContext('2d',{willReadFrequently:true});
 function solve3(M,r){ // sistema 3×3 por eliminación
   const A=M.map((row,i)=>row.concat(r[i]));
   for(let i=0;i<3;i++){ let p=i; for(let k=i+1;k<3;k++) if(Math.abs(A[k][i])>Math.abs(A[p][i])) p=k; [A[i],A[p]]=[A[p],A[i]]; if(Math.abs(A[i][i])<1e-9) return null;
     for(let k=0;k<3;k++) if(k!==i){ const f=A[k][i]/A[i][i]; for(let c=i;c<4;c++) A[k][c]-=f*A[i][c]; } }
   return [A[0][3]/A[0][0],A[1][3]/A[1][1],A[2][3]/A[2][2]];
 }
-function detectFace(src){
-  tctx.drawImage(src,0,0,TW,TW);
-  const d=tctx.getImageData(0,0,TW,TW).data, NP=TW*TW, ok=new Uint8Array(NP), seen=new Uint8Array(NP), stack=new Int32Array(NP);
+function findBlobs(src,a0,a1,fill,W){ // grupos de píxeles que parecen pegatinas
+  W=W||120; const TW=W, ac=W*W/14400, cx2=W===TW0?tctx:tctx2; cx2.drawImage(src,0,0,TW,TW);
+  const d=cx2.getImageData(0,0,TW,TW).data, NP=TW*TW, ok=new Uint8Array(NP), seen=new Uint8Array(NP), stack=new Int32Array(NP);
   const diff=(p,q)=>Math.abs(d[p]-d[q])+Math.abs(d[p+1]-d[q+1])+Math.abs(d[p+2]-d[q+2]);
   for(let y=0;y<TW;y++) for(let x=0;x<TW;x++){
     const i=y*TW+x, p=i*4, mx=Math.max(d[p],d[p+1],d[p+2]), mn=Math.min(d[p],d[p+1],d[p+2]);
@@ -538,9 +539,13 @@ function detectFace(src){
       if(y>0){ const n=i-TW; if(ok[n]&&!seen[n]&&diff(i*4,n*4)<40){ seen[n]=1; stack[top++]=n; } }
       if(y<TW-1){ const n=i+TW; if(ok[n]&&!seen[n]&&diff(i*4,n*4)<40){ seen[n]=1; stack[top++]=n; } } }
     const w=x1-x0+1, h=y1-y0+1;
-    if(area<30||area>1100||w/h<.55||w/h>1.8||area/(w*h)<.5) continue;
+    if(area<(a0<.5?16:30)*ac||area>1100*ac||w/h<a0||w/h>a1||area/(w*h)<fill) continue;
     cand.push({x:sx/area,y:sy/area,a:area,side:Math.sqrt(area)});
   }
+  return cand;
+}
+function detectFace(src){ // una cara vista casi de frente (para las fotos)
+  const cand=findBlobs(src,.55,1.8,.5);
   if(cand.length<7||cand.length>90) return null;
   let best=null;
   for(const b of cand) for(const n of cand){
@@ -565,6 +570,44 @@ function detectFace(src){
   for(const [i,j] of [[-1.4,-1.4],[1.4,-1.4],[-1.4,1.4],[1.4,1.4]]){ const x=t.cx+i*t.ux+j*t.vx, y=t.cy+i*t.uy+j*t.vy; if(x<0||x>480||y<0||y>480) return null; }
   return t;
 }
+function fitGrid(m){ // mínimos cuadrados: centro y ejes de la retícula; devuelve también el error medio
+  const M=[[0,0,0],[0,0,0],[0,0,0]], rx=[0,0,0], ry=[0,0,0];
+  for(const q of m){ const v=[1,q.i,q.j]; for(let a=0;a<3;a++){ rx[a]+=v[a]*q.b.x; ry[a]+=v[a]*q.b.y; for(let c=0;c<3;c++) M[a][c]+=v[a]*v[c]; } }
+  const X=solve3(M,rx), Y=solve3(M,ry); if(!X||!Y) return null;
+  let e=0; for(const q of m) e+=Math.hypot(X[0]+X[1]*q.i+X[2]*q.j-q.b.x, Y[0]+Y[1]*q.i+Y[2]*q.j-q.b.y);
+  return {X,Y,err:e/m.length/Math.sqrt(Math.abs(X[1]*Y[2]-Y[1]*X[2]))};
+}
+function detectFaces(src,max){ // hasta `max` caras, también vistas en diagonal (retículas inclinadas)
+  let cand=findBlobs(src,.28,3.6,.32,TW2); const out=[], k=480/TW2;
+  if(cand.length>130) return out;
+  for(let round=0; round<max && cand.length>=7; round++){
+    let best=null;
+    for(const b of cand){
+      const nb=[]; for(const n of cand){ if(n===b||n.a/b.a<.35||n.a/b.a>2.8) continue; const dd=Math.hypot(n.x-b.x,n.y-b.y); if(dd>b.side*.6&&dd<b.side*3) nb.push({n,d:dd}); }
+      nb.sort((p,q)=>p.d-q.d); nb.length=Math.min(nb.length,6);
+      for(const A of nb) for(const B of nb){
+        if(A===B) continue; const ux=A.n.x-b.x, uy=A.n.y-b.y, vx=B.n.x-b.x, vy=B.n.y-b.y, cr=ux*vy-uy*vx;
+        if(cr<=0||cr/(A.d*B.d)<.45||A.d/B.d<.3||A.d/B.d>3.3) continue;
+        const tol=Math.min(A.d,B.d)*.3, m=[{i:0,j:0,b:b}], used=new Set([b]);
+        for(let j=-1;j<=1;j++) for(let i=-1;i<=1;i++){ if(!i&&!j) continue;
+          const px=b.x+i*ux+j*vx, py=b.y+i*uy+j*vy; let hit=null, hd=tol;
+          for(const c of cand){ if(used.has(c)||c.a/b.a<.35||c.a/b.a>2.8) continue; const dd=Math.hypot(c.x-px,c.y-py); if(dd<hd){ hd=dd; hit=c; } }
+          if(hit){ used.add(hit); m.push({i,j,b:hit}); } }
+        if(m.length<7||(best&&m.length<best.m.length)) continue;
+        const g=fitGrid(m); if(!g) continue;
+        if(!best||m.length>best.m.length||g.err<best.g.err){ best={m,g}; }
+      }
+    }
+    if(!best) break;
+    const {X,Y}=best.g, gone=new Set(best.m.map(q=>q.b)); cand=cand.filter(c=>!gone.has(c));
+    let u=[X[1],Y[1]], v=[X[2],Y[2]]; if(u[0]*v[1]-u[1]*v[0]<0) v=[-v[0],-v[1]];
+    const seq=[u,v,[-u[0],-u[1]],[-v[0],-v[1]]], ui=seq.reduce((bi,a,i)=>a[0]>seq[bi][0]?i:bi,0); u=seq[ui]; v=seq[(ui+1)%4];   // u hacia la derecha, sin espejar
+    const lu=Math.hypot(u[0],u[1])*k, lv=Math.hypot(v[0],v[1])*k, cos=(u[0]*v[0]+u[1]*v[1])*k*k/(lu*lv);
+    if(best.g.err>.18||lu<9||lu>150||lv<9||lv>150||lu/lv<.3||lu/lv>3.3||Math.abs(cos)>.85) continue;
+    out.push({cx:(X[0]+.5)*k,cy:(Y[0]+.5)*k,ux:u[0]*k,uy:u[1]*k,vx:v[0]*k,vy:v[1]*k,n:best.m.length});
+  }
+  return out;
+}
 let follow=true;
 function stepTrack(tr, t, det){ // det: resultado nuevo, null si no se encontró, undefined si no tocaba buscar
   if(det){ tr.tg=det; tr.seen=t; } if(t-tr.seen>600) tr.tg=FIX; tr.on=tr.tg!==FIX;
@@ -579,7 +622,7 @@ const view = $('view'), ctx = view.getContext('2d', {willReadFrequently:true});
 let img = null, zoom = 1, ox = 0, oy = 0, liveCols = null;
 const frame = $('frame'); grid(frame); grid($('ar-frame'));
 for(const side of ['top','bottom','left','right']){ const h=document.createElement('i'); h.className='hint '+side; frame.appendChild(h); }
-const trScan=mkTrack(), trAR=mkTrack(); let lastTrack=0;
+const trScan=mkTrack(); let lastTrack=0;
 const facesEl = $('faces');
 SCAN.forEach((f,i)=>{ const b=document.createElement('button'); b.type='button';
   b.innerHTML='<span class="mini">'+'<i></i>'.repeat(9)+'</span>'+FACE_ES[f]; b.onclick=()=>{step=i; img=null; rgbs.fill(null,f*9,f*9+9); renderScan();}; facesEl.appendChild(b); });
@@ -813,6 +856,7 @@ function renderStep(){
   $('timer').textContent=fmt(elapsed());
   $('done').hidden=!solved; $('lost').hidden=solved; $('done-time').textContent='Resuelto en '+fmt(elapsed());
   $('final-snap').hidden=!live; $('final-btn').hidden=live;
+  $('hold-note').textContent=live?'Puedes girar el cubo entero para mostrar otras caras: la app reconoce cada una por el color de su centro.':'No gires el cubo entero mientras resuelves: solo las caras que indica cada paso.';
   $('ar-stage').hidden=!live; $('ar-status').hidden=!live||solved; $('follow-row2').hidden=!live||solved;
   hitSince=0; ghostPos=-1;
   const st=$('ar-stage'), big=pos>0&&!solved, grew=big&&!st.classList.contains('big');
@@ -843,53 +887,95 @@ scene.onpointermove=e=>{ if(!drag) return; ry+=(e.clientX-drag[0])*.5; rx=Math.m
 scene.onpointerup=scene.onpointercancel=()=>drag=null;
 orient();
 
-/* ---------- guía sobre la cámara: flechas encima del cubo y detección del giro ---------- */
+/* ---------- guía sobre la cámara: hasta 3 caras a la vez ----------
+   Cada cara visible se reconoce por el color de su centro (los centros nunca cambian de sitio) y su
+   orientación sale de la cara vecina que se vea o, si está sola, de comparar sus colores con el estado
+   conocido del cubo. Por eso se puede girar el cubo entero sin perder la solución. */
 const ar=$('ar'), actx=ar.getContext('2d',{willReadFrequently:true});
-let hitSince=0, lastCheck=0, wrongSince=0, wrongM=-1, notice='', noticeUntil=0;
-function chevron(c,x,y,ang,a){ c.save(); c.translate(x,y); c.rotate(ang); c.globalAlpha=a; c.beginPath(); c.moveTo(-13,-17); c.lineTo(9,0); c.lineTo(-13,17); c.stroke(); c.restore(); }
-function arrows(m,t){
-  const f=m/3|0, k=m%3, c=actx, ph=(t/900)%1, sign=k===2?-1:1;
-  c.save(); c.transform(trAR.ux/CELL,trAR.uy/CELL,trAR.vx/CELL,trAR.vy/CELL,trAR.cx-240*(trAR.ux+trAR.vx)/CELL,trAR.cy-240*(trAR.uy+trAR.vy)/CELL);
-  c.strokeStyle='#FFD23F'; c.fillStyle='rgba(255,210,63,.2)'; c.lineWidth=7; c.lineCap='round'; c.lineJoin='round'; c.shadowColor='#FFD23F'; c.shadowBlur=14;
-  const line=(x1,y1,x2,y2)=>{ const ang=Math.atan2(y2-y1,x2-x1); for(let i=0;i<4;i++){ const u=(ph+i/4)%1; chevron(c,x1+(x2-x1)*u,y1+(y2-y1)*u,ang,Math.sin(Math.PI*u)); } };
-  // una sola flecha curva que crece en el sentido del giro (visto desde el frente), para que no haya dudas
-  const arc=(r,dir)=>{ const p2=(t/1700)%1, g=Math.min(1,p2/.75), e=g*g*(3-2*g), a0=-Math.PI/2, a1=a0+dir*(.08+.67*e)*Math.PI*2;
-    c.globalAlpha=p2>.85?(1-p2)/.15:1; c.beginPath(); c.arc(240,240,r,a0,a1,dir<0); c.stroke();
-    chevron(c,240+r*Math.cos(a1),240+r*Math.sin(a1),a1+dir*Math.PI/2,c.globalAlpha); c.globalAlpha=1; };
-  const mid=i=>X0+CELL*(i+.5), a=X0+18, b=X0+SZ-18;
-  if(f===0||f===3){ const row=f===0?0:2, d=(f===0?-1:1)*sign; c.shadowBlur=0; c.fillRect(X0,X0+CELL*row,SZ,CELL); c.shadowBlur=14; d<0?line(b,mid(row),a,mid(row)):line(a,mid(row),b,mid(row)); }
-  else if(f===1||f===4){ const col=f===1?2:0, d=(f===1?-1:1)*sign; c.shadowBlur=0; c.fillRect(X0+CELL*col,X0,CELL,SZ); c.shadowBlur=14; d<0?line(mid(col),b,mid(col),a):line(mid(col),a,mid(col),b); }
-  else if(f===2) arc(118,sign);
-  else arc(214,-sign);
-  c.restore(); c.save(); c.fillStyle='#FFD23F'; c.font='700 34px Rubik, sans-serif'; c.textBaseline='top';
-  c.fillText(C.moveName(m)+(f===5?' · cara de atrás':''),14,10);
-  c.restore();
+let hitSince=0, lastCheck=0, wrongSince=0, wrongM=-1, notice='', noticeUntil=0, tracks={}, down=[];
+const ROTMAP=[0,1,2,3].map(r=>{ const m=[]; for(let k=0;k<9;k++){ let row=k/3|0, col=k%3; for(let q=0;q<r;q++){ const nr=col, nc=2-row; row=nr; col=nc; } m.push(row*3+col); } return m; });
+const rotDir=(r,dc,dr)=>{ for(let q=0;q<r;q++){ const ndr=dc, ndc=-dr; dr=ndr; dc=ndc; } return [dc,dr]; };
+const sub3=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]], dot3=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const cross3=(n,p)=>[n[1]*p[2]-n[2]*p[1], n[2]*p[0]-n[0]*p[2], n[0]*p[1]-n[1]*p[0]];
+const AX=[0,1,2,3,4,5].map(f=>({col:sub3(C.facePos(f,1,2),C.facePos(f,1,1)), row:sub3(C.facePos(f,2,1),C.facePos(f,1,1))}));
+const axisOf=(d,r)=>{ const [a,b]=rotDir(r,0,1); return [a*d.ux+b*d.vx, a*d.uy+b*d.vy]; };   // hacia dónde queda "abajo" de la cara en la imagen
+const rFromDown=(d,dn)=>{ let br=0, bs=-1e9; for(let r=0;r<4;r++){ const a=axisOf(d,r), s=(a[0]*dn[0]+a[1]*dn[1])/Math.hypot(a[0],a[1]); if(s>bs){ bs=s; br=r; } } return br; };
+function geoR(a,b){ // orientación de la cara a según dónde se ve su vecina b
+  const dc=dot3(N[b.f],AX[a.f].col), dr=dot3(N[b.f],AX[a.f].row), d=a.d, w0=b.d.cx-d.cx, w1=b.d.cy-d.cy, det=d.ux*d.vy-d.uy*d.vx;
+  const al=(w0*d.vy-w1*d.vx)/det, be=(d.ux*w1-d.uy*w0)/det, li=Math.abs(al)>Math.abs(be)?Math.sign(al):0, lj=li?0:Math.sign(be);
+  for(let r=0;r<4;r++){ const q=rotDir(r,dc,dr); if(q[0]===li&&q[1]===lj) return r; }
+  return null;
 }
-function detect(cols, now){
-  const cls=cols.map(v=>{ const L=lab(v); let b=0, bd=1e9; refs.forEach((r,i)=>{ const d=dist(L,r); if(d<bd){bd=d;b=i;} }); return b; });
-  const before=cur.slice(18,27), after=C.applyMove(cur,moves[pos]).slice(18,27);
-  let ch=0,chA=0,chB=0,un=0,unOk=0;
-  for(let k=0;k<9;k++){ if(after[k]!==before[k]){ ch++; if(cls[k]===after[k]) chA++; else if(cls[k]===before[k]) chB++; } else { un++; if(cls[k]===before[k]) unOk++; } }
-  const st=$('ar-status');
-  if(!ch){ st.textContent='Este giro es en la cara de atrás. Gírala hacia donde apunta la flecha, tal como la ves desde el frente, y toca Siguiente.'; hitSince=0; return; }
-  st.textContent = unOk+chB+chA>=7 ? 'Cubo en posición. Repite el giro que hace el cubo transparente.' : 'Muestra a la cámara la cara de centro '+COLORS[stickers[22]].n+', con el centro '+COLORS[stickers[4]].n+' arriba.';
-  if(now<noticeUntil) st.textContent=notice;
-  const hit = chA>=ch-(ch>=6?2:ch>=4?1:0) && chA>chB && unOk>=Math.ceil(un*2/3); // con pocas casillas cambiadas se exigen todas
-  if(hit){ wrongSince=0; if(!hitSince) hitSince=now; else if(now-hitSince>450 && !main3d.busy) forward(); return; }
-  hitSince=0;
-  // ¿Hizo un giro distinto al indicado? Compara la cara frontal con la que dejaría cada uno de los otros giros.
-  const score=fr=>fr.reduce((n,v,k)=>n+(cls[k]===v),0), same=(a,b)=>a.every((v,k)=>v===b[k]), exp=moves[pos], sB=score(before), sA=score(after);
-  let cand=-1, candFr=null, candSc=0;
-  for(let m2=0;m2<18;m2++){
-    if(m2===exp || (exp%3===1 && (m2/3|0)===(exp/3|0))) continue; // un medio giro pasa por el cuarto de giro: no es error
-    const fr=C.applyMove(cur,m2).slice(18,27); if(same(fr,before)||same(fr,after)) continue;
-    const sc=score(fr); if(sc<8||sc<=sB||sc<=sA) continue;
-    if(cand>=0 && same(fr,candFr)){ cand=-2; break; }        // dos giros dejan la misma cara: no se puede saber cuál fue
-    if(sc>candSc){ cand=m2; candFr=fr; candSc=sc; }
+const toColor=v=>{ const L=lab(v); let b=0, bd=1e9; refs.forEach((r,i)=>{ const d=dist(L,r); if(d<bd){bd=d;b=i;} }); return b; };
+function chevron(c,x,y,ang,a){ c.save(); c.translate(x,y); c.rotate(ang); c.globalAlpha=a; c.beginPath(); c.moveTo(-13,-17); c.lineTo(9,0); c.lineTo(-13,17); c.stroke(); c.restore(); }
+
+function analyse(t){
+  const exp=moves[pos], mf=exp/3|0, after=C.applyMove(cur,exp), faceOf=[]; for(let f=0;f<6;f++) faceOf[cur[f*9+4]]=f;
+  let dets=follow?detectFaces(ar,3):[]; if(!dets.length) dets=[Object.assign({fixed:true},FIX)];
+  let vs=dets.map(d=>{ const cols=sample(actx,d), cls=cols.map(toColor); return {d,cols,cls,f:faceOf[cls[4]],r:null,geo:null}; });
+  const best4=(v,H)=>{ let b=0; for(let r=0;r<4;r++){ let n=0; for(let k=0;k<9;k++) if(v.cls[ROTMAP[r][k]]===H[v.f*9+k]) n++; if(n>b) b=n; } return b; };
+  vs=vs.filter((v,i)=>vs.findIndex(o=>o.f===v.f)===i && (v.d.fixed || Math.max(best4(v,cur),best4(v,after))>=5));
+  for(const a of vs) for(const b of vs) if(a!==b&&a.geo==null&&b.f!==(a.f+3)%6) a.geo=geoR(a,b);
+  const sc=(v,E,r)=>{ let n=0; for(let k=0;k<9;k++) if(v.cls[ROTMAP[r][k]]===E[k]) n++; return n; };
+  for(const v of vs){
+    const E=cur.slice(v.f*9,v.f*9+9), s=[0,1,2,3].map(r=>sc(v,E,r)), top=Math.max(...s), uniq=top>=8&&s.filter(x=>x===top).length===1?s.indexOf(top):null;
+    const mem=down[v.f]?rFromDown(v.d,down[v.f]):null;
+    v.r = v.geo!=null ? v.geo : (v.f===mf ? (mem!=null?mem:uniq) : (uniq!=null?uniq:mem));
+    if(v.r!=null){ const a=axisOf(v.d,v.r), l=Math.hypot(a[0],a[1]); down[v.f]=[a[0]/l,a[1]/l]; }
   }
-  if(cand<0){ wrongSince=0; wrongM=-1; return; }
-  if(cand!==wrongM){ wrongM=cand; wrongSince=now; return; }
-  if(now-wrongSince>1000 && !main3d.busy){ wrongSince=0; wrongM=-1; reroute(cand, now); }
+  // puntaje de cada cara vista frente a un estado hipotético del cubo
+  const fs=(v,H,turned)=>{ const E=H.slice(v.f*9,v.f*9+9); if(v.r!=null) return sc(v,E,v.r); if(v.f===turned) return null; return Math.max(sc(v,E,0),sc(v,E,1),sc(v,E,2),sc(v,E,3)); };
+  const ev=(H,turned)=>{ let sum=0,min=9,n=0; for(const v of vs){ const s=fs(v,H,turned); if(s==null) continue; n++; sum+=s; if(s<min) min=s; } return {sum,min,n}; };
+  for(const v of vs){ const tr=tracks[v.f], snap=!tr||t-tr.seen>500||(tr.ux*v.d.ux+tr.uy*v.d.uy)<.7*Math.hypot(tr.ux,tr.uy)*Math.hypot(v.d.ux,v.d.uy);
+    const o=snap?Object.assign({},v.d):tr; o.tg=v.d; o.seen=t; o.cols=v.cols; o.r=v.r; o.fixed=!!v.d.fixed; o.f=v.f; tracks[v.f]=o; }
+  const eB=ev(cur,mf), eA=ev(after,mf), st=$('ar-status');
+  const known=eB.n>0&&Math.max(eB.sum,eA.sum)>=7*eB.n;
+  const canSee=vs.some(v=>{ if(v.f===mf) return v.r!=null; for(let k=0;k<9;k++) if(cur[v.f*9+k]!==after[v.f*9+k]) return true; return false; });
+  const names=vs.map(v=>COLORS[cur[v.f*9+4]].n).join(', ');
+  st.textContent = !known ? 'Muestra el cubo a la cámara. Puedes enseñar una, dos o tres caras.'
+    : canSee ? 'Veo '+(vs.length>1?'las caras ':'la cara ')+names+'. Haz el giro que marcan las flechas.'
+    : 'Veo '+(vs.length>1?'las caras ':'la cara ')+names+', pero este giro no se nota desde aquí. Gira el cubo hasta ver la cara de centro '+COLORS[cur[mf*9+4]].n+' o una vecina.';
+  if(t<noticeUntil) st.textContent=notice;
+  const hit=eA.n>0&&eA.min>=7&&eA.sum>=8*eA.n&&eA.sum-eB.sum>=2;
+  if(hit){ wrongSince=0; if(!hitSince) hitSince=t; else if(t-hitSince>450&&!main3d.busy) forward(); return; }
+  hitSince=0;
+  // ¿Hizo un giro distinto al indicado?
+  let cand=-1, best=0, tie=false;
+  for(let m2=0;m2<18;m2++){
+    const t2=m2/3|0; if(m2===exp||(exp%3===1&&t2===mf)) continue;       // un medio giro pasa por el cuarto de giro: no es error
+    const e2=ev(C.applyMove(cur,m2),t2), b2=ev(cur,t2), a2=ev(after,t2);
+    if(!e2.n||e2.min<8||e2.sum-b2.sum<2||e2.sum<=a2.sum) continue;
+    if(e2.sum-b2.sum>best){ best=e2.sum-b2.sum; cand=m2; tie=false; } else if(e2.sum-b2.sum===best) tie=true;
+  }
+  if(cand<0||tie){ wrongSince=0; wrongM=-1; return; }
+  if(cand!==wrongM){ wrongM=cand; wrongSince=t; return; }
+  if(t-wrongSince>1000&&!main3d.busy){ wrongSince=0; wrongM=-1; reroute(cand,t); }
+}
+function drawTracks(t){
+  const c=actx, m=moves[pos], mf=m/3|0, k=m%3, sign=k===2?-1:1, ph=(t/900)%1, mid=i=>X0+CELL*(i+.5);
+  for(const f in tracks){ const tr=tracks[f]; if(t-tr.seen>500){ delete tracks[f]; continue; }
+    for(const q of ['cx','cy','ux','uy','vx','vy']) tr[q]+=(tr.tg[q]-tr[q])*.35;
+    c.save(); c.transform(tr.ux/CELL,tr.uy/CELL,tr.vx/CELL,tr.vy/CELL,tr.cx-240*(tr.ux+tr.vx)/CELL,tr.cy-240*(tr.uy+tr.vy)/CELL);
+    c.lineWidth=4; c.strokeStyle=tr.fixed?'#fff':'#FFD23F'; c.strokeRect(X0,X0,SZ,SZ);
+    c.lineWidth=1.5; c.globalAlpha=.6; c.beginPath(); for(let i=1;i<3;i++){ c.moveTo(X0+CELL*i,X0); c.lineTo(X0+CELL*i,X0+SZ); c.moveTo(X0,X0+CELL*i); c.lineTo(X0+SZ,X0+CELL*i); } c.stroke(); c.globalAlpha=1;
+    if(tr.cols) tr.cols.forEach((v,i)=>{ c.beginPath(); c.arc(mid(i%3),mid(i/3|0),13,0,7); c.fillStyle='rgb('+v.map(Math.round)+')'; c.fill(); c.lineWidth=3; c.strokeStyle='#fff'; c.stroke(); });
+    c.strokeStyle='#FFD23F'; c.fillStyle='rgba(255,210,63,.22)'; c.lineWidth=7; c.lineCap='round'; c.lineJoin='round'; c.shadowColor='#FFD23F'; c.shadowBlur=14;
+    const g=+f;
+    if(g===mf){ // flecha curva: horario en pantalla es horario en la cara
+      const p2=(t/1700)%1, gr=Math.min(1,p2/.75), e=gr*gr*(3-2*gr), a0=-Math.PI/2, a1=a0+sign*(.08+.67*e)*Math.PI*2;
+      c.globalAlpha=p2>.85?(1-p2)/.15:1; c.beginPath(); c.arc(240,240,118,a0,a1,sign<0); c.stroke();
+      chevron(c,240+118*Math.cos(a1),240+118*Math.sin(a1),a1+sign*Math.PI/2,c.globalAlpha); c.globalAlpha=1;
+    } else if(g!==(mf+3)%6 && tr.r!=null){ // fila o columna de esta cara que pertenece a la capa que gira
+      const ks=[]; for(let q=0;q<9;q++) if(dot3(C.FACELET[g*9+q].pos,N[mf])===1) ks.push(q);
+      const tang=cross3(N[mf],C.FACELET[g*9+ks[1]].pos), d=rotDir(tr.r,dot3(tang,AX[g].col)*sign,dot3(tang,AX[g].row)*sign);
+      c.shadowBlur=0; for(const q of ks){ const L=ROTMAP[tr.r][q]; c.fillRect(X0+CELL*(L%3),X0+CELL*(L/3|0),CELL,CELL); } c.shadowBlur=14;
+      const L=ROTMAP[tr.r][ks[1]], mx=mid(L%3), my=mid(L/3|0), x1=mx-d[0]*CELL*1.3, y1=my-d[1]*CELL*1.3, x2=mx+d[0]*CELL*1.3, y2=my+d[1]*CELL*1.3, ang=Math.atan2(y2-y1,x2-x1);
+      for(let i=0;i<4;i++){ const u=(ph+i/4)%1; chevron(c,x1+(x2-x1)*u,y1+(y2-y1)*u,ang,Math.sin(Math.PI*u)); }
+    }
+    c.restore();
+  }
+  c.save(); c.fillStyle='#FFD23F'; c.font='700 34px Rubik, sans-serif'; c.textBaseline='top'; c.shadowColor='#000'; c.shadowBlur=6;
+  c.fillText(C.moveName(m)+'  ·  centro '+COLORS[cur[mf*9+4]].n,14,10); c.restore();
 }
 function reroute(m2, now){ // el usuario hizo m2: se calcula una solución nueva desde el estado real
   const state=C.applyMove(cur,m2), of={}; for(let f=0;f<6;f++) of[state[f*9+4]]=f;
@@ -910,16 +996,17 @@ function frameLoop(t){
     if(!tEnd) $('timer').textContent=fmt(elapsed());
     const src=camSrc(); if(!src) return;
     actx.fillStyle='#0d110b'; actx.fillRect(0,0,480,480); cover(actx,src,480,zoom,0,0);
-    stepTrack(trAR,t,look?detectFace(ar):undefined);
-    const tf=cssTrack(trAR,$('ar-stage')); $('ar-frame').style.transform=tf; $('ghost').style.transform=tf; $('ar-frame').classList.toggle('lock',trAR.on);
+    let g1=null;
     if(pos<moves.length){
-      if(t-lastCheck>140){ lastCheck=t; const cols=sample(actx,trAR); dots($('ar-frame'),cols); detect(cols,t); }
-      arrows(moves[pos],t);
-      // holograma: el cubo virtual repite el giro pendiente encima del cubo real
-      if(!reduced && (ghostPos!==pos || t-ghostAt>2300)){ ghostPos=pos; ghostAt=t; ghost.build(cur); ghost.turn(moves[pos],false,false,1100,450); }
+      if(t-lastCheck>110){ lastCheck=t; analyse(t); }
+      drawTracks(t);
+      // holograma: sólo cuando se ve únicamente la cara frontal; el cubo virtual repite el giro pendiente encima
+      const act=Object.values(tracks); if(act.length===1&&act[0].f===2&&act[0].r!=null) g1=act[0];
+      if(g1&&!reduced&&(ghostPos!==pos||t-ghostAt>2300)){ ghostPos=pos; ghostAt=t; ghost.build(cur); ghost.turn(moves[pos],false,false,1100,450); }
     }
-    $('ghost').hidden=reduced||pos>=moves.length;
-    const gk=$('ar-stage').clientWidth*0.76/162; $('ghost-cube').style.transform='scale3d('+gk+','+gk+','+gk+') translateZ(-81px)';
+    $('ghost').hidden=reduced||!g1;
+    if(g1){ $('ghost').style.transform=cssTrack(g1,$('ar-stage'))+' rotate('+g1.r*90+'deg)';
+      const gk=$('ar-stage').clientWidth*0.76/162; $('ghost-cube').style.transform='scale3d('+gk+','+gk+','+gk+') translateZ(-81px)'; }
   }
 }
 requestAnimationFrame(frameLoop);
@@ -942,7 +1029,7 @@ $('home').onclick=()=>{
   $('nav-review').disabled=true; $('nav-solve').disabled=true; renderScan(); show('scan');
 };
 
-document.querySelectorAll('.follow-box').forEach(b=>b.onchange=()=>{ follow=b.checked; document.querySelectorAll('.follow-box').forEach(o=>o.checked=follow); if(!follow){ trScan.seen=trAR.seen=-1e9; } });
+document.querySelectorAll('.follow-box').forEach(b=>b.onchange=()=>{ follow=b.checked; document.querySelectorAll('.follow-box').forEach(o=>o.checked=follow); if(!follow){ trScan.seen=-1e9; tracks={}; } });
 renderScan(); show('scan');
 if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) startCam();
 setTimeout(()=>C.init(), 400);
